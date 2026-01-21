@@ -9,20 +9,13 @@ from torchvision.transforms import functional as TF
 
 class PairedSRDataset(Dataset):
     def __init__(self, lr_dir, hr_dir, scale=4, hr_crop=128, train=True):
-        self.lr_paths = sorted([
-            os.path.join(lr_dir, f) for f in os.listdir(lr_dir)
-            if os.path.isfile(os.path.join(lr_dir, f))
-        ], key=self._nat_key)
-        self.hr_paths = sorted([
-            os.path.join(hr_dir, f) for f in os.listdir(hr_dir)
-            if os.path.isfile(os.path.join(hr_dir, f))
-        ], key=self._nat_key)
+        self.pairs = self._build_pairs(lr_dir, hr_dir)
         self.scale = scale
         self.hr_crop = hr_crop
         self.train = train
 
     def __len__(self):
-        return min(len(self.lr_paths), len(self.hr_paths))
+        return len(self.pairs)
 
     @staticmethod
     def _nat_key(path):
@@ -35,6 +28,31 @@ class PairedSRDataset(Dataset):
             else:
                 key.append(p.lower())
         return key
+
+    @staticmethod
+    def _pair_key(path):
+        name = os.path.splitext(os.path.basename(path))[0].lower()
+        name = re.sub(r'(?:_?lr|_?hr)$', '', name)
+        digits = re.findall(r'\\d+', name)
+        return digits[0] if digits else name
+
+    def _build_pairs(self, lr_dir, hr_dir):
+        lr_files = [
+            os.path.join(lr_dir, f) for f in os.listdir(lr_dir)
+            if os.path.isfile(os.path.join(lr_dir, f))
+        ]
+        hr_files = [
+            os.path.join(hr_dir, f) for f in os.listdir(hr_dir)
+            if os.path.isfile(os.path.join(hr_dir, f))
+        ]
+
+        lr_map = {self._pair_key(p): p for p in lr_files}
+        hr_map = {self._pair_key(p): p for p in hr_files}
+        keys = sorted(set(lr_map) & set(hr_map), key=self._nat_key)
+        pairs = [(lr_map[k], hr_map[k]) for k in keys]
+        if not pairs:
+            raise ValueError('No matched LR/HR pairs found.')
+        return pairs
 
     def _load(self, path):
         img = Image.open(path).convert('RGB')
@@ -57,8 +75,9 @@ class PairedSRDataset(Dataset):
         return lr_patch, hr_patch
 
     def __getitem__(self, idx):
-        lr_img = self._load(self.lr_paths[idx])
-        hr_img = self._load(self.hr_paths[idx])
+        lr_path, hr_path = self.pairs[idx]
+        lr_img = self._load(lr_path)
+        hr_img = self._load(hr_path)
 
         if self.train:
             lr_img, hr_img = self._paired_random_crop(lr_img, hr_img)
@@ -70,5 +89,12 @@ class PairedSRDataset(Dataset):
 
 def build_loader(lr_dir, hr_dir, scale, hr_crop, batch_size, num_workers, train):
     dataset = PairedSRDataset(lr_dir, hr_dir, scale=scale, hr_crop=hr_crop, train=train)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=train, num_workers=num_workers, pin_memory=True)
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=train,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+    )
     return dataset, loader
