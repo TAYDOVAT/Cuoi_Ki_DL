@@ -226,7 +226,7 @@ class DiscriminatorForVGG(nn.Module):
     ) -> None:
         super(DiscriminatorForVGG, self).__init__()
         self.features = nn.Sequential(
-            # input size. (3) x 96 x 96
+            # input size: arbitrary H x W
             nn.Conv2d(in_channels, channels, (3, 3), (1, 1), (1, 1), bias=True),
             nn.LeakyReLU(0.2, True),
             # state size. (64) x 48 x 48
@@ -266,17 +266,16 @@ class DiscriminatorForVGG(nn.Module):
             nn.LeakyReLU(0.2, True),
         )
 
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.classifier = nn.Sequential(
-            nn.Linear(int(8 * channels) * 6 * 6, 1024),
+            nn.Linear(int(8 * channels), 1024),
             nn.LeakyReLU(0.2, True),
             nn.Linear(1024, out_channels),
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        # Input image size must equal 96
-        assert x.size(2) == 96 and x.size(3) == 96, "Input image size must be is 96x96"
-
         x = self.features(x)
+        x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
 
