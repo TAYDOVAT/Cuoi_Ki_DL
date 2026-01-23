@@ -87,6 +87,8 @@ def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, 
 
     total_g = 0.0
     total_d = 0.0
+    total_d_real = 0.0
+    total_d_fake = 0.0
     total_psnr = 0.0
     total_ssim = 0.0
     count = 0
@@ -103,6 +105,10 @@ def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, 
         loss_d_real = adversarial_criterion(d_real, True)
         loss_d_fake = adversarial_criterion(d_fake, False)
         loss_d = 0.5 * (loss_d_real + loss_d_fake)
+
+        with torch.no_grad():
+            d_real_prob = torch.sigmoid(d_real).mean()
+            d_fake_prob = torch.sigmoid(d_fake).mean()
 
         optimizer_d.zero_grad(set_to_none=True)
         loss_d.backward()
@@ -130,6 +136,8 @@ def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, 
         batch_size = lr.size(0)
         total_g += loss_g.item() * batch_size
         total_d += loss_d.item() * batch_size
+        total_d_real += d_real_prob.item() * batch_size
+        total_d_fake += d_fake_prob.item() * batch_size
         total_psnr += batch_psnr * batch_size
         total_ssim += batch_ssim * batch_size
         count += batch_size
@@ -144,6 +152,8 @@ def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, 
     return {
         'loss_g': total_g / max(count, 1),
         'loss_d': total_d / max(count, 1),
+        'd_real_prob': total_d_real / max(count, 1),
+        'd_fake_prob': total_d_fake / max(count, 1),
         'psnr': total_psnr / max(count, 1),
         'ssim': total_ssim / max(count, 1),
     }
@@ -157,6 +167,8 @@ def val_gan_epoch(generator, discriminator, loader, device,
 
     total_g = 0.0
     total_d = 0.0
+    total_d_real = 0.0
+    total_d_fake = 0.0
     total_psnr = 0.0
     total_ssim = 0.0
     count = 0
@@ -174,6 +186,9 @@ def val_gan_epoch(generator, discriminator, loader, device,
             loss_d_fake = adversarial_criterion(d_fake, False)
             loss_d = 0.5 * (loss_d_real + loss_d_fake)
 
+            d_real_prob = torch.sigmoid(d_real).mean()
+            d_fake_prob = torch.sigmoid(d_fake).mean()
+
             loss_pixel = pixel_criterion(sr, hr)
             loss_perc = perceptual_criterion(sr, hr)
             loss_adv = adversarial_criterion(d_fake, True)
@@ -188,6 +203,8 @@ def val_gan_epoch(generator, discriminator, loader, device,
             batch_size = lr.size(0)
             total_g += loss_g.item() * batch_size
             total_d += loss_d.item() * batch_size
+            total_d_real += d_real_prob.item() * batch_size
+            total_d_fake += d_fake_prob.item() * batch_size
             total_psnr += batch_psnr * batch_size
             total_ssim += batch_ssim * batch_size
             count += batch_size
@@ -202,6 +219,8 @@ def val_gan_epoch(generator, discriminator, loader, device,
     return {
         'loss_g': total_g / max(count, 1),
         'loss_d': total_d / max(count, 1),
+        'd_real_prob': total_d_real / max(count, 1),
+        'd_fake_prob': total_d_fake / max(count, 1),
         'psnr': total_psnr / max(count, 1),
         'ssim': total_ssim / max(count, 1),
     }
