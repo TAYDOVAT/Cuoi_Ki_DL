@@ -81,7 +81,7 @@ def val_srresnet_epoch(model, loader, device, pixel_criterion):
 
 def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, device,
                     pixel_criterion, perceptual_criterion, adversarial_criterion,
-                    weights):
+                    weights, g_steps=2, d_steps=1):
     generator.train()
     discriminator.train()
 
@@ -98,35 +98,43 @@ def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, 
         hr = hr.to(device, non_blocking=True)
 
         # Train D
-        with torch.no_grad():
-            sr = generator(lr)
-        d_real = discriminator(hr)
-        d_fake = discriminator(sr.detach())
-        loss_d_real = adversarial_criterion(d_real, True)
-        loss_d_fake = adversarial_criterion(d_fake, False)
-        loss_d = 0.5 * (loss_d_real + loss_d_fake)
+        loss_d = 0.0
+        d_real_prob = 0.0
+        d_fake_prob = 0.0
+        for _ in range(d_steps):
+            with torch.no_grad():
+                sr = generator(lr)
+            d_real = discriminator(hr)
+            d_fake = discriminator(sr.detach())
+            loss_d_real = adversarial_criterion(d_real, True)
+            loss_d_fake = adversarial_criterion(d_fake, False)
+            loss_d_step = 0.5 * (loss_d_real + loss_d_fake)
 
-        with torch.no_grad():
-            d_real_prob = torch.sigmoid(d_real).mean()
-            d_fake_prob = torch.sigmoid(d_fake).mean()
+            with torch.no_grad():
+                d_real_prob = torch.sigmoid(d_real).mean()
+                d_fake_prob = torch.sigmoid(d_fake).mean()
 
-        optimizer_d.zero_grad(set_to_none=True)
-        loss_d.backward()
-        optimizer_d.step()
+            optimizer_d.zero_grad(set_to_none=True)
+            loss_d_step.backward()
+            optimizer_d.step()
+            loss_d = loss_d_step
 
         # Train G
-        sr = generator(lr)
-        d_fake_for_g = discriminator(sr)
-        loss_pixel = pixel_criterion(sr, hr)
-        loss_perc = perceptual_criterion(sr, hr)
-        loss_adv = adversarial_criterion(d_fake_for_g, True)
-        loss_g = (weights['pixel'] * loss_pixel +
-                  weights['perceptual'] * loss_perc +
-                  weights['adversarial'] * loss_adv)
+        loss_g = 0.0
+        for _ in range(g_steps):
+            sr = generator(lr)
+            d_fake_for_g = discriminator(sr)
+            loss_pixel = pixel_criterion(sr, hr)
+            loss_perc = perceptual_criterion(sr, hr)
+            loss_adv = adversarial_criterion(d_fake_for_g, True)
+            loss_g_step = (weights['pixel'] * loss_pixel +
+                           weights['perceptual'] * loss_perc +
+                           weights['adversarial'] * loss_adv)
 
-        optimizer_g.zero_grad(set_to_none=True)
-        loss_g.backward()
-        optimizer_g.step()
+            optimizer_g.zero_grad(set_to_none=True)
+            loss_g_step.backward()
+            optimizer_g.step()
+            loss_g = loss_g_step
 
         with torch.no_grad():
             sr_clip = sr.clamp(0.0, 1.0)
