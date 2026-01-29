@@ -79,9 +79,20 @@ def val_srresnet_epoch(model, loader, device, pixel_criterion):
     }
 
 
+def _r1_penalty(d_real, real_imgs):
+    grad_real = torch.autograd.grad(
+        outputs=d_real.sum(),
+        inputs=real_imgs,
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True,
+    )[0]
+    return grad_real.pow(2).flatten(1).sum(1).mean()
+
+
 def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, device,
                     pixel_criterion, perceptual_criterion, adversarial_criterion,
-                    weights, g_steps=2, d_steps=1):
+                    weights, g_steps=2, d_steps=1, r1_weight=0.0):
     generator.train()
     discriminator.train()
 
@@ -106,11 +117,16 @@ def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, 
         for _ in range(d_steps):
             with torch.no_grad():
                 sr = generator(lr)
+            if r1_weight > 0.0:
+                hr.requires_grad_(True)
             d_real = discriminator(hr)
             d_fake = discriminator(sr.detach())
             loss_d_real = adversarial_criterion(d_real, True, real_label)
             loss_d_fake = adversarial_criterion(d_fake, False, fake_label)
             loss_d_step = 0.5 * (loss_d_real + loss_d_fake)
+            if r1_weight > 0.0:
+                r1_penalty = _r1_penalty(d_real, hr)
+                loss_d_step = loss_d_step + 0.5 * r1_weight * r1_penalty
 
             with torch.no_grad():
                 d_real_prob = torch.sigmoid(d_real).mean()
@@ -120,6 +136,8 @@ def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, 
             loss_d_step.backward()
             optimizer_d.step()
             loss_d = loss_d_step
+            if r1_weight > 0.0:
+                hr = hr.detach()
 
         # Train G
         loss_g = 0.0

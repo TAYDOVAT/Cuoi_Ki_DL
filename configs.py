@@ -17,6 +17,7 @@ CFG = {
         'adv_weight': 1e-3,
         'perc_weight': 6e-3,
         'pixel_weight': 1.0,
+        'r1_weight': 0.0,
     },
     'paths': {
         'train_lr': 'train/train_lr',
