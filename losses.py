@@ -37,6 +37,9 @@ class AdversarialLoss(nn.Module):
         super().__init__()
         self.criterion = nn.BCEWithLogitsLoss()
 
-    def forward(self, logits, target_is_real):
-        target = torch.ones_like(logits) if target_is_real else torch.zeros_like(logits)
+    def forward(self, logits, target_is_real, target_value=None):
+        if target_value is None:
+            target = torch.ones_like(logits) if target_is_real else torch.zeros_like(logits)
+        else:
+            target = torch.full_like(logits, float(target_value))
         return self.criterion(logits, target)

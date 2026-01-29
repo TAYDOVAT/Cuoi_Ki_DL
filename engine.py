@@ -98,6 +98,8 @@ def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, 
         hr = hr.to(device, non_blocking=True)
 
         # Train D
+        real_label = 0.9
+        fake_label = 0.0
         loss_d = 0.0
         d_real_prob = 0.0
         d_fake_prob = 0.0
@@ -106,8 +108,8 @@ def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, 
                 sr = generator(lr)
             d_real = discriminator(hr)
             d_fake = discriminator(sr.detach())
-            loss_d_real = adversarial_criterion(d_real, True)
-            loss_d_fake = adversarial_criterion(d_fake, False)
+            loss_d_real = adversarial_criterion(d_real, True, real_label)
+            loss_d_fake = adversarial_criterion(d_fake, False, fake_label)
             loss_d_step = 0.5 * (loss_d_real + loss_d_fake)
 
             with torch.no_grad():
