@@ -20,7 +20,7 @@ class PairedSRDataset(Dataset):
     @staticmethod
     def _nat_key(path):
         name = os.path.basename(path)
-        parts = re.split(r'(\\d+)', name)
+        parts = re.split(r'(\d+)', name)
         key = []
         for p in parts:
             if p.isdigit():
@@ -33,7 +33,7 @@ class PairedSRDataset(Dataset):
     def _pair_key(path):
         name = os.path.splitext(os.path.basename(path))[0].lower()
         name = re.sub(r'(?:_?lr|_?hr)$', '', name)
-        digits = re.findall(r'\\d+', name)
+        digits = re.findall(r'\d+', name)
         return digits[0] if digits else name
 
     def _build_pairs(self, lr_dir, hr_dir):
@@ -74,6 +74,21 @@ class PairedSRDataset(Dataset):
         lr_patch = TF.crop(lr_img, lr_top, lr_left, lr_crop, lr_crop)
         return lr_patch, hr_patch
 
+    def _paired_augment(self, lr, hr):
+        # Random Horizontal Flip
+        if random.random() < 0.5:
+            lr = TF.hflip(lr)
+            hr = TF.hflip(hr)
+        # Random Vertical Flip
+        if random.random() < 0.5:
+            lr = TF.vflip(lr)
+            hr = TF.vflip(hr)
+        # Random Rotate 90
+        if random.random() < 0.5:
+            lr = TF.rotate(lr, 90)
+            hr = TF.rotate(hr, 90)
+        return lr, hr
+
     def __getitem__(self, idx):
         lr_path, hr_path = self.pairs[idx]
         lr_img = self._load(lr_path)
@@ -81,6 +96,7 @@ class PairedSRDataset(Dataset):
 
         if self.train:
             lr_img, hr_img = self._paired_random_crop(lr_img, hr_img)
+            lr_img, hr_img = self._paired_augment(lr_img, hr_img)
 
         lr_tensor = TF.to_tensor(lr_img)
         hr_tensor = TF.to_tensor(hr_img)

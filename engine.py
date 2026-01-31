@@ -6,29 +6,30 @@ from metrics import psnr, ssim
 
 # ==================== Checkpoint Functions ====================
 
+
 def save_gan_checkpoint(
-    generator, 
-    discriminator, 
-    optimizer_g, 
-    optimizer_d, 
-    scheduler_g, 
-    scheduler_d, 
-    epoch, 
+    generator,
+    discriminator,
+    optimizer_g,
+    optimizer_d,
+    scheduler_g,
+    scheduler_d,
+    epoch,
     best_psnr,
-    path="weights/gan_checkpoint.pth"
+    path="weights/gan_checkpoint.pth",
 ):
     """Save GAN checkpoint with all training states."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    
+
     checkpoint = {
-        'epoch': epoch,
-        'best_psnr': best_psnr,
-        'generator_state_dict': generator.state_dict(),
-        'discriminator_state_dict': discriminator.state_dict(),
-        'optimizer_g_state_dict': optimizer_g.state_dict(),
-        'optimizer_d_state_dict': optimizer_d.state_dict(),
-        'scheduler_g_state_dict': scheduler_g.state_dict() if scheduler_g else None,
-        'scheduler_d_state_dict': scheduler_d.state_dict() if scheduler_d else None,
+        "epoch": epoch,
+        "best_psnr": best_psnr,
+        "generator_state_dict": generator.state_dict(),
+        "discriminator_state_dict": discriminator.state_dict(),
+        "optimizer_g_state_dict": optimizer_g.state_dict(),
+        "optimizer_d_state_dict": optimizer_d.state_dict(),
+        "scheduler_g_state_dict": scheduler_g.state_dict() if scheduler_g else None,
+        "scheduler_d_state_dict": scheduler_d.state_dict() if scheduler_d else None,
     }
     torch.save(checkpoint, path)
 
@@ -42,14 +43,14 @@ def load_gan_checkpoint(
     scheduler_d=None,
     path="weights/gan_checkpoint.pth",
     load_disc=True,
-    device="cuda"
+    device="cuda",
 ):
     """
     Load GAN checkpoint and restore all training states.
-    
+
     Args:
         load_disc: If True, load discriminator weights. If False, only load generator.
-        
+
     Returns:
         start_epoch: Epoch to resume from (1-indexed)
         best_psnr: Best PSNR achieved so far
@@ -57,30 +58,30 @@ def load_gan_checkpoint(
     if not os.path.exists(path):
         print(f"[Checkpoint] Not found at {path}. Starting from scratch.")
         return 1, -1.0
-    
+
     print(f"[Checkpoint] Loading from {path}...")
     checkpoint = torch.load(path, map_location=device)
-    
+
     # Load generator (always)
-    generator.load_state_dict(checkpoint['generator_state_dict'])
-    optimizer_g.load_state_dict(checkpoint['optimizer_g_state_dict'])
-    if scheduler_g and checkpoint.get('scheduler_g_state_dict'):
-        scheduler_g.load_state_dict(checkpoint['scheduler_g_state_dict'])
+    generator.load_state_dict(checkpoint["generator_state_dict"])
+    optimizer_g.load_state_dict(checkpoint["optimizer_g_state_dict"])
+    if scheduler_g and checkpoint.get("scheduler_g_state_dict"):
+        scheduler_g.load_state_dict(checkpoint["scheduler_g_state_dict"])
     print("[Checkpoint] Generator weights loaded.")
-    
+
     # Load discriminator (optional)
     if load_disc:
-        discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
-        optimizer_d.load_state_dict(checkpoint['optimizer_d_state_dict'])
-        if scheduler_d and checkpoint.get('scheduler_d_state_dict'):
-            scheduler_d.load_state_dict(checkpoint['scheduler_d_state_dict'])
+        discriminator.load_state_dict(checkpoint["discriminator_state_dict"])
+        optimizer_d.load_state_dict(checkpoint["optimizer_d_state_dict"])
+        if scheduler_d and checkpoint.get("scheduler_d_state_dict"):
+            scheduler_d.load_state_dict(checkpoint["scheduler_d_state_dict"])
         print("[Checkpoint] Discriminator weights loaded.")
     else:
         print("[Checkpoint] Discriminator weights SKIPPED (load_disc=False).")
-    
-    start_epoch = checkpoint['epoch'] + 1  # Resume from next epoch
-    best_psnr = checkpoint.get('best_psnr', -1.0)
-    
+
+    start_epoch = checkpoint["epoch"] + 1  # Resume from next epoch
+    best_psnr = checkpoint.get("best_psnr", -1.0)
+
     print(f"[Checkpoint] Resuming from epoch {start_epoch}, best PSNR: {best_psnr:.4f}")
     return start_epoch, best_psnr
 
@@ -88,48 +89,54 @@ def load_gan_checkpoint(
 def load_gan_history_from_log(log_path, start_epoch):
     """
     Load existing training history from CSV log file.
-    
+
     Args:
         log_path: Path to gan_log.csv
         start_epoch: Starting epoch (1-indexed), logs before this will be kept
-        
+
     Returns:
         history dict with lists for each metric
     """
     history = {
-        'loss_g': {'train': [], 'val': []},
-        'loss_d': {'train': [], 'val': []},
-        'psnr': {'train': [], 'val': []},
-        'ssim': {'train': [], 'val': []},
-        'd_real_prob': {'train': [], 'val': []},
-        'd_fake_prob': {'train': [], 'val': []},
+        "loss_g": {"train": [], "val": []},
+        "loss_d": {"train": [], "val": []},
+        "psnr": {"train": [], "val": []},
+        "ssim": {"train": [], "val": []},
+        "d_real_prob": {"train": [], "val": []},
+        "d_fake_prob": {"train": [], "val": []},
     }
-    
+
     if not os.path.exists(log_path) or start_epoch <= 1:
         return history
-    
+
     try:
-        with open(log_path, 'r', newline='') as f:
+        with open(log_path, "r", newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                epoch = int(row['epoch'])
+                epoch = int(row["epoch"])
                 if epoch < start_epoch:
-                    history['loss_g']['train'].append(float(row['train_loss_g']))
-                    history['loss_g']['val'].append(float(row['val_loss_g']))
-                    history['loss_d']['train'].append(float(row['train_loss_d']))
-                    history['loss_d']['val'].append(float(row['val_loss_d']))
-                    history['d_real_prob']['train'].append(float(row['train_d_real_prob']))
-                    history['d_real_prob']['val'].append(float(row['val_d_real_prob']))
-                    history['d_fake_prob']['train'].append(float(row['train_d_fake_prob']))
-                    history['d_fake_prob']['val'].append(float(row['val_d_fake_prob']))
-                    history['psnr']['train'].append(float(row['train_psnr']))
-                    history['psnr']['val'].append(float(row['val_psnr']))
-                    history['ssim']['train'].append(float(row['train_ssim']))
-                    history['ssim']['val'].append(float(row['val_ssim']))
-        print(f"[Log] Loaded {len(history['loss_g']['train'])} previous epochs from {log_path}")
+                    history["loss_g"]["train"].append(float(row["train_loss_g"]))
+                    history["loss_g"]["val"].append(float(row["val_loss_g"]))
+                    history["loss_d"]["train"].append(float(row["train_loss_d"]))
+                    history["loss_d"]["val"].append(float(row["val_loss_d"]))
+                    history["d_real_prob"]["train"].append(
+                        float(row["train_d_real_prob"])
+                    )
+                    history["d_real_prob"]["val"].append(float(row["val_d_real_prob"]))
+                    history["d_fake_prob"]["train"].append(
+                        float(row["train_d_fake_prob"])
+                    )
+                    history["d_fake_prob"]["val"].append(float(row["val_d_fake_prob"]))
+                    history["psnr"]["train"].append(float(row["train_psnr"]))
+                    history["psnr"]["val"].append(float(row["val_psnr"]))
+                    history["ssim"]["train"].append(float(row["train_ssim"]))
+                    history["ssim"]["val"].append(float(row["val_ssim"]))
+        print(
+            f"[Log] Loaded {len(history['loss_g']['train'])} previous epochs from {log_path}"
+        )
     except Exception as e:
         print(f"[Log] Error loading history: {e}. Starting fresh.")
-    
+
     return history
 
 
@@ -139,41 +146,54 @@ def rewrite_log_up_to_epoch(log_path, history, start_epoch):
     This ensures clean resume without duplicate entries.
     """
     expected_header = [
-        'epoch', 'train_loss_g', 'val_loss_g', 'train_loss_d', 'val_loss_d',
-        'train_d_real_prob', 'val_d_real_prob', 'train_d_fake_prob', 'val_d_fake_prob',
-        'train_psnr', 'val_psnr', 'train_ssim', 'val_ssim',
+        "epoch",
+        "train_loss_g",
+        "val_loss_g",
+        "train_loss_d",
+        "val_loss_d",
+        "train_d_real_prob",
+        "val_d_real_prob",
+        "train_d_fake_prob",
+        "val_d_fake_prob",
+        "train_psnr",
+        "val_psnr",
+        "train_ssim",
+        "val_ssim",
     ]
-    
+
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    
-    with open(log_path, 'w', newline='') as f:
+
+    with open(log_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(expected_header)
-        
-        num_entries = len(history['loss_g']['train'])
+
+        num_entries = len(history["loss_g"]["train"])
         for i in range(num_entries):
-            writer.writerow([
-                i + 1,  # epoch (1-indexed)
-                history['loss_g']['train'][i],
-                history['loss_g']['val'][i],
-                history['loss_d']['train'][i],
-                history['loss_d']['val'][i],
-                history['d_real_prob']['train'][i],
-                history['d_real_prob']['val'][i],
-                history['d_fake_prob']['train'][i],
-                history['d_fake_prob']['val'][i],
-                history['psnr']['train'][i],
-                history['psnr']['val'][i],
-                history['ssim']['train'][i],
-                history['ssim']['val'][i],
-            ])
+            writer.writerow(
+                [
+                    i + 1,  # epoch (1-indexed)
+                    history["loss_g"]["train"][i],
+                    history["loss_g"]["val"][i],
+                    history["loss_d"]["train"][i],
+                    history["loss_d"]["val"][i],
+                    history["d_real_prob"]["train"][i],
+                    history["d_real_prob"]["val"][i],
+                    history["d_fake_prob"]["train"][i],
+                    history["d_fake_prob"]["val"][i],
+                    history["psnr"]["train"][i],
+                    history["psnr"]["val"][i],
+                    history["ssim"]["train"][i],
+                    history["ssim"]["val"][i],
+                ]
+            )
 
 
 # ==================== Training Functions ====================
 
+
 def _maybe_postfix(loader, loss_val, psnr_val):
-    if hasattr(loader, 'set_postfix'):
-        loader.set_postfix({'loss': f'{loss_val:.4f}', 'psnr': f'{psnr_val:.2f}'})
+    if hasattr(loader, "set_postfix"):
+        loader.set_postfix({"loss": f"{loss_val:.4f}", "psnr": f"{psnr_val:.2f}"})
 
 
 def train_srresnet_epoch(model, loader, optimizer, device, pixel_criterion):
@@ -208,9 +228,9 @@ def train_srresnet_epoch(model, loader, optimizer, device, pixel_criterion):
         _maybe_postfix(loader, loss.item(), total_psnr / max(count, 1))
 
     return {
-        'loss': total_loss / max(count, 1),
-        'psnr': total_psnr / max(count, 1),
-        'ssim': total_ssim / max(count, 1),
+        "loss": total_loss / max(count, 1),
+        "psnr": total_psnr / max(count, 1),
+        "ssim": total_ssim / max(count, 1),
     }
 
 
@@ -242,9 +262,9 @@ def val_srresnet_epoch(model, loader, device, pixel_criterion):
             _maybe_postfix(loader, loss.item(), total_psnr / max(count, 1))
 
     return {
-        'loss': total_loss / max(count, 1),
-        'psnr': total_psnr / max(count, 1),
-        'ssim': total_ssim / max(count, 1),
+        "loss": total_loss / max(count, 1),
+        "psnr": total_psnr / max(count, 1),
+        "ssim": total_ssim / max(count, 1),
     }
 
 
@@ -259,9 +279,21 @@ def _r1_penalty(d_real, real_imgs):
     return grad_real.pow(2).flatten(1).sum(1).mean()
 
 
-def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, device,
-                    pixel_criterion, perceptual_criterion, adversarial_criterion,
-                    weights, g_steps=2, d_steps=1, r1_weight=0.0):
+def train_gan_epoch(
+    generator,
+    discriminator,
+    loader,
+    optimizer_g,
+    optimizer_d,
+    device,
+    pixel_criterion,
+    perceptual_criterion,
+    adversarial_criterion,
+    weights,
+    g_steps=2,
+    d_steps=1,
+    r1_weight=0.0,
+):
     generator.train()
     discriminator.train()
 
@@ -316,9 +348,11 @@ def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, 
             loss_pixel = pixel_criterion(sr, hr)
             loss_perc = perceptual_criterion(sr, hr)
             loss_adv = adversarial_criterion(d_fake_for_g, True)
-            loss_g_step = (weights['pixel'] * loss_pixel +
-                           weights['perceptual'] * loss_perc +
-                           weights['adversarial'] * loss_adv)
+            loss_g_step = (
+                weights["pixel"] * loss_pixel
+                + weights["perceptual"] * loss_perc
+                + weights["adversarial"] * loss_adv
+            )
 
             optimizer_g.zero_grad(set_to_none=True)
             loss_g_step.backward()
@@ -339,26 +373,35 @@ def train_gan_epoch(generator, discriminator, loader, optimizer_g, optimizer_d, 
         total_ssim += batch_ssim * batch_size
         count += batch_size
 
-        if hasattr(loader, 'set_postfix'):
-            loader.set_postfix({
-                'loss_G': f'{loss_g.item():.4f}',
-                'loss_D': f'{loss_d.item():.4f}',
-                'psnr': f'{total_psnr / max(count, 1):.2f}',
-            })
+        if hasattr(loader, "set_postfix"):
+            loader.set_postfix(
+                {
+                    "loss_G": f"{loss_g.item():.4f}",
+                    "loss_D": f"{loss_d.item():.4f}",
+                    "psnr": f"{total_psnr / max(count, 1):.2f}",
+                }
+            )
 
     return {
-        'loss_g': total_g / max(count, 1),
-        'loss_d': total_d / max(count, 1),
-        'd_real_prob': total_d_real / max(count, 1),
-        'd_fake_prob': total_d_fake / max(count, 1),
-        'psnr': total_psnr / max(count, 1),
-        'ssim': total_ssim / max(count, 1),
+        "loss_g": total_g / max(count, 1),
+        "loss_d": total_d / max(count, 1),
+        "d_real_prob": total_d_real / max(count, 1),
+        "d_fake_prob": total_d_fake / max(count, 1),
+        "psnr": total_psnr / max(count, 1),
+        "ssim": total_ssim / max(count, 1),
     }
 
 
-def val_gan_epoch(generator, discriminator, loader, device,
-                  pixel_criterion, perceptual_criterion, adversarial_criterion,
-                  weights):
+def val_gan_epoch(
+    generator,
+    discriminator,
+    loader,
+    device,
+    pixel_criterion,
+    perceptual_criterion,
+    adversarial_criterion,
+    weights,
+):
     generator.eval()
     discriminator.eval()
 
@@ -389,9 +432,11 @@ def val_gan_epoch(generator, discriminator, loader, device,
             loss_pixel = pixel_criterion(sr, hr)
             loss_perc = perceptual_criterion(sr, hr)
             loss_adv = adversarial_criterion(d_fake, True)
-            loss_g = (weights['pixel'] * loss_pixel +
-                      weights['perceptual'] * loss_perc +
-                      weights['adversarial'] * loss_adv)
+            loss_g = (
+                weights["pixel"] * loss_pixel
+                + weights["perceptual"] * loss_perc
+                + weights["adversarial"] * loss_adv
+            )
 
             sr_clip = sr.clamp(0.0, 1.0)
             batch_psnr = psnr(sr_clip, hr)
@@ -406,18 +451,20 @@ def val_gan_epoch(generator, discriminator, loader, device,
             total_ssim += batch_ssim * batch_size
             count += batch_size
 
-            if hasattr(loader, 'set_postfix'):
-                loader.set_postfix({
-                    'loss_G': f'{loss_g.item():.4f}',
-                    'loss_D': f'{loss_d.item():.4f}',
-                    'psnr': f'{total_psnr / max(count, 1):.2f}',
-                })
+            if hasattr(loader, "set_postfix"):
+                loader.set_postfix(
+                    {
+                        "loss_G": f"{loss_g.item():.4f}",
+                        "loss_D": f"{loss_d.item():.4f}",
+                        "psnr": f"{total_psnr / max(count, 1):.2f}",
+                    }
+                )
 
     return {
-        'loss_g': total_g / max(count, 1),
-        'loss_d': total_d / max(count, 1),
-        'd_real_prob': total_d_real / max(count, 1),
-        'd_fake_prob': total_d_fake / max(count, 1),
-        'psnr': total_psnr / max(count, 1),
-        'ssim': total_ssim / max(count, 1),
+        "loss_g": total_g / max(count, 1),
+        "loss_d": total_d / max(count, 1),
+        "d_real_prob": total_d_real / max(count, 1),
+        "d_fake_prob": total_d_fake / max(count, 1),
+        "psnr": total_psnr / max(count, 1),
+        "ssim": total_ssim / max(count, 1),
     }
