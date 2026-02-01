@@ -33,16 +33,27 @@ def show_lr_sr_hr(lr, sr, hr):
 
 
 def plot_curves(history):
-    fig, axs = plt.subplots(1, len(history), figsize=(5 * len(history), 4))
-    if len(history) == 1:
+    n_plots = len(history)
+    ncols = min(3, n_plots)
+    nrows = (n_plots + ncols - 1) // ncols
+    
+    fig, axs = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows))
+    if n_plots == 1:
         axs = [axs]
+    else:
+        axs = axs.flatten()
 
-    for ax, (key, vals) in zip(axs, history.items()):
+    for i, (key, vals) in enumerate(history.items()):
+        ax = axs[i]
         ax.plot(vals.get('train', []), label='train')
         ax.plot(vals.get('val', []), label='val')
         ax.set_title(key)
         ax.legend()
         ax.grid(True, alpha=0.3)
+        
+    # Hide unused axes
+    for j in range(i + 1, len(axs)):
+        axs[j].axis('off')
 
     plt.tight_layout()
     plt.show()
