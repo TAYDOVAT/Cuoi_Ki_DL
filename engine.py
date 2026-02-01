@@ -15,7 +15,7 @@ def save_gan_checkpoint(
     scheduler_g,
     scheduler_d,
     epoch,
-    best_psnr,
+    best_lpips,
     path="weights/gan_checkpoint.pth",
 ):
     """Save GAN checkpoint with all training states."""
@@ -23,7 +23,7 @@ def save_gan_checkpoint(
 
     checkpoint = {
         "epoch": epoch,
-        "best_psnr": best_psnr,
+        "best_lpips": best_lpips,
         "generator_state_dict": generator.state_dict(),
         "discriminator_state_dict": discriminator.state_dict(),
         "optimizer_g_state_dict": optimizer_g.state_dict(),
@@ -57,7 +57,7 @@ def load_gan_checkpoint(
     """
     if not os.path.exists(path):
         print(f"[Checkpoint] Not found at {path}. Starting from scratch.")
-        return 1, -1.0
+        return 1, 100.0
 
     print(f"[Checkpoint] Loading from {path}...")
     checkpoint = torch.load(path, map_location=device)
@@ -80,10 +80,10 @@ def load_gan_checkpoint(
         print("[Checkpoint] Discriminator weights SKIPPED (load_disc=False).")
 
     start_epoch = checkpoint["epoch"] + 1  # Resume from next epoch
-    best_psnr = checkpoint.get("best_psnr", -1.0)
+    best_lpips = checkpoint.get("best_lpips", 100.0)
 
-    print(f"[Checkpoint] Resuming from epoch {start_epoch}, best PSNR: {best_psnr:.4f}")
-    return start_epoch, best_psnr
+    print(f"[Checkpoint] Resuming from epoch {start_epoch}, best LPIPS: {best_lpips:.4f}")
+    return start_epoch, best_lpips
 
 
 def load_gan_history_from_log(log_path, start_epoch):
@@ -290,6 +290,7 @@ def train_gan_epoch(
     perceptual_criterion,
     adversarial_criterion,
     weights,
+    lpips_metric=None,
     g_steps=2,
     d_steps=1,
     r1_weight=0.0,
@@ -303,6 +304,7 @@ def train_gan_epoch(
     total_d_fake = 0.0
     total_psnr = 0.0
     total_ssim = 0.0
+    total_lpips = 0.0
     count = 0
 
     for lr, hr in loader:
@@ -318,10 +320,17 @@ def train_gan_epoch(
         for _ in range(d_steps):
             with torch.no_grad():
                 sr = generator(lr)
+            # Add Gaussian Noise to prevent D from overfitting
+            noise_std = 0.05
             if r1_weight > 0.0:
                 hr.requires_grad_(True)
-            d_real = discriminator(hr)
-            d_fake = discriminator(sr.detach())
+            
+            # Apply noise to inputs for D
+            d_real_input = hr + torch.randn_like(hr) * noise_std
+            d_fake_input = sr.detach() + torch.randn_like(sr) * noise_std
+            
+            d_real = discriminator(d_real_input)
+            d_fake = discriminator(d_fake_input)
             loss_d_real = adversarial_criterion(d_real, True, real_label)
             loss_d_fake = adversarial_criterion(d_fake, False, fake_label)
             loss_d_step = 0.5 * (loss_d_real + loss_d_fake)
@@ -363,6 +372,14 @@ def train_gan_epoch(
             sr_clip = sr.clamp(0.0, 1.0)
             batch_psnr = psnr(sr_clip, hr)
             batch_ssim = ssim(sr_clip, hr)
+            
+            if lpips_metric is not None:
+                # Inputs to LPIPS should be [-1, 1]
+                sr_norm = sr_clip * 2.0 - 1.0
+                hr_norm = hr * 2.0 - 1.0
+                batch_lpips = lpips_metric(sr_norm, hr_norm).mean().item()
+            else:
+                batch_lpips = 0.0
 
         batch_size = lr.size(0)
         total_g += loss_g.item() * batch_size
@@ -371,6 +388,7 @@ def train_gan_epoch(
         total_d_fake += d_fake_prob.item() * batch_size
         total_psnr += batch_psnr * batch_size
         total_ssim += batch_ssim * batch_size
+        total_lpips += batch_lpips * batch_size
         count += batch_size
 
         if hasattr(loader, "set_postfix"):
@@ -379,6 +397,7 @@ def train_gan_epoch(
                     "loss_G": f"{loss_g.item():.4f}",
                     "loss_D": f"{loss_d.item():.4f}",
                     "psnr": f"{total_psnr / max(count, 1):.2f}",
+                    "lpips": f"{total_lpips / max(count, 1):.4f}",
                 }
             )
 
@@ -389,6 +408,7 @@ def train_gan_epoch(
         "d_fake_prob": total_d_fake / max(count, 1),
         "psnr": total_psnr / max(count, 1),
         "ssim": total_ssim / max(count, 1),
+        "lpips": total_lpips / max(count, 1),
     }
 
 
@@ -401,6 +421,7 @@ def val_gan_epoch(
     perceptual_criterion,
     adversarial_criterion,
     weights,
+    lpips_metric=None,
 ):
     generator.eval()
     discriminator.eval()
@@ -411,6 +432,7 @@ def val_gan_epoch(
     total_d_fake = 0.0
     total_psnr = 0.0
     total_ssim = 0.0
+    total_lpips = 0.0
     count = 0
 
     with torch.no_grad():
@@ -441,6 +463,13 @@ def val_gan_epoch(
             sr_clip = sr.clamp(0.0, 1.0)
             batch_psnr = psnr(sr_clip, hr)
             batch_ssim = ssim(sr_clip, hr)
+            
+            if lpips_metric is not None:
+                sr_norm = sr_clip * 2.0 - 1.0
+                hr_norm = hr * 2.0 - 1.0
+                batch_lpips = lpips_metric(sr_norm, hr_norm).mean().item()
+            else:
+                batch_lpips = 0.0
 
             batch_size = lr.size(0)
             total_g += loss_g.item() * batch_size
@@ -449,6 +478,7 @@ def val_gan_epoch(
             total_d_fake += d_fake_prob.item() * batch_size
             total_psnr += batch_psnr * batch_size
             total_ssim += batch_ssim * batch_size
+            total_lpips += batch_lpips * batch_size
             count += batch_size
 
             if hasattr(loader, "set_postfix"):
@@ -457,6 +487,7 @@ def val_gan_epoch(
                         "loss_G": f"{loss_g.item():.4f}",
                         "loss_D": f"{loss_d.item():.4f}",
                         "psnr": f"{total_psnr / max(count, 1):.2f}",
+                        "lpips": f"{total_lpips / max(count, 1):.4f}",
                     }
                 )
 
@@ -467,4 +498,5 @@ def val_gan_epoch(
         "d_fake_prob": total_d_fake / max(count, 1),
         "psnr": total_psnr / max(count, 1),
         "ssim": total_ssim / max(count, 1),
+        "lpips": total_lpips / max(count, 1),
     }
