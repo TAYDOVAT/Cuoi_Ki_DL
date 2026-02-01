@@ -102,6 +102,7 @@ def load_gan_history_from_log(log_path, start_epoch):
         "loss_d": {"train": [], "val": []},
         "psnr": {"train": [], "val": []},
         "ssim": {"train": [], "val": []},
+        "lpips": {"train": [], "val": []},
         "d_real_prob": {"train": [], "val": []},
         "d_fake_prob": {"train": [], "val": []},
     }
@@ -131,6 +132,12 @@ def load_gan_history_from_log(log_path, start_epoch):
                     history["psnr"]["val"].append(float(row["val_psnr"]))
                     history["ssim"]["train"].append(float(row["train_ssim"]))
                     history["ssim"]["val"].append(float(row["val_ssim"]))
+                    if "train_lpips" in row and "val_lpips" in row:
+                        history["lpips"]["train"].append(float(row["train_lpips"]))
+                        history["lpips"]["val"].append(float(row["val_lpips"]))
+                    else:
+                        history["lpips"]["train"].append(0.0)
+                        history["lpips"]["val"].append(0.0)
         print(
             f"[Log] Loaded {len(history['loss_g']['train'])} previous epochs from {log_path}"
         )
@@ -159,6 +166,8 @@ def rewrite_log_up_to_epoch(log_path, history, start_epoch):
         "val_psnr",
         "train_ssim",
         "val_ssim",
+        "train_lpips",
+        "val_lpips",
     ]
 
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -184,6 +193,8 @@ def rewrite_log_up_to_epoch(log_path, history, start_epoch):
                     history["psnr"]["val"][i],
                     history["ssim"]["train"][i],
                     history["ssim"]["val"][i],
+                    history["lpips"]["train"][i],
+                    history["lpips"]["val"][i],
                 ]
             )
 
