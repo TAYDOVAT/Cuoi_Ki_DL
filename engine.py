@@ -436,6 +436,7 @@ def val_gan_epoch(
     count = 0
 
     with torch.no_grad():
+        torch.cuda.empty_cache()
         for lr, hr in loader:
             lr = lr.to(device, non_blocking=True)
             hr = hr.to(device, non_blocking=True)
