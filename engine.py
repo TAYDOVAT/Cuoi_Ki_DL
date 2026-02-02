@@ -1,4 +1,5 @@
 import torch
+import torch.distributed as dist
 import os
 import csv
 from metrics import psnr, ssim
@@ -21,11 +22,14 @@ def save_gan_checkpoint(
     """Save GAN checkpoint with all training states."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
+    gen = generator.module if hasattr(generator, "module") else generator
+    disc = discriminator.module if hasattr(discriminator, "module") else discriminator
+
     checkpoint = {
         "epoch": epoch,
         "best_lpips": best_lpips,
-        "generator_state_dict": generator.state_dict(),
-        "discriminator_state_dict": discriminator.state_dict(),
+        "generator_state_dict": gen.state_dict(),
+        "discriminator_state_dict": disc.state_dict(),
         "optimizer_g_state_dict": optimizer_g.state_dict(),
         "optimizer_d_state_dict": optimizer_d.state_dict(),
         "scheduler_g_state_dict": scheduler_g.state_dict() if scheduler_g else None,
@@ -63,7 +67,10 @@ def load_gan_checkpoint(
     checkpoint = torch.load(path, map_location=device)
 
     # Load generator (always)
-    generator.load_state_dict(checkpoint["generator_state_dict"])
+    gen = generator.module if hasattr(generator, "module") else generator
+    disc = discriminator.module if hasattr(discriminator, "module") else discriminator
+
+    gen.load_state_dict(checkpoint["generator_state_dict"])
     optimizer_g.load_state_dict(checkpoint["optimizer_g_state_dict"])
     if scheduler_g and checkpoint.get("scheduler_g_state_dict"):
         scheduler_g.load_state_dict(checkpoint["scheduler_g_state_dict"])
@@ -71,7 +78,7 @@ def load_gan_checkpoint(
 
     # Load discriminator (optional)
     if load_disc:
-        discriminator.load_state_dict(checkpoint["discriminator_state_dict"])
+        disc.load_state_dict(checkpoint["discriminator_state_dict"])
         optimizer_d.load_state_dict(checkpoint["optimizer_d_state_dict"])
         if scheduler_d and checkpoint.get("scheduler_d_state_dict"):
             scheduler_d.load_state_dict(checkpoint["scheduler_d_state_dict"])
@@ -202,9 +209,21 @@ def rewrite_log_up_to_epoch(log_path, history, start_epoch):
 # ==================== Training Functions ====================
 
 
+def _is_main_process():
+    return not dist.is_available() or not dist.is_initialized() or dist.get_rank() == 0
+
+
 def _maybe_postfix(loader, loss_val, psnr_val):
-    if hasattr(loader, "set_postfix"):
+    if _is_main_process() and hasattr(loader, "set_postfix"):
         loader.set_postfix({"loss": f"{loss_val:.4f}", "psnr": f"{psnr_val:.2f}"})
+
+
+def _ddp_reduce_totals(totals, device):
+    if dist.is_available() and dist.is_initialized():
+        tensor = torch.tensor(totals, device=device)
+        dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+        return tensor.tolist()
+    return totals
 
 
 def train_srresnet_epoch(model, loader, optimizer, device, pixel_criterion):
@@ -237,6 +256,10 @@ def train_srresnet_epoch(model, loader, optimizer, device, pixel_criterion):
         count += batch_size
 
         _maybe_postfix(loader, loss.item(), total_psnr / max(count, 1))
+
+    total_loss, total_psnr, total_ssim, count = _ddp_reduce_totals(
+        [total_loss, total_psnr, total_ssim, float(count)], device
+    )
 
     return {
         "loss": total_loss / max(count, 1),
@@ -271,6 +294,10 @@ def val_srresnet_epoch(model, loader, device, pixel_criterion):
             count += batch_size
 
             _maybe_postfix(loader, loss.item(), total_psnr / max(count, 1))
+
+    total_loss, total_psnr, total_ssim, count = _ddp_reduce_totals(
+        [total_loss, total_psnr, total_ssim, float(count)], device
+    )
 
     return {
         "loss": total_loss / max(count, 1),
@@ -412,6 +439,29 @@ def train_gan_epoch(
                 }
             )
 
+    (
+        total_g,
+        total_d,
+        total_d_real,
+        total_d_fake,
+        total_psnr,
+        total_ssim,
+        total_lpips,
+        count,
+    ) = _ddp_reduce_totals(
+        [
+            total_g,
+            total_d,
+            total_d_real,
+            total_d_fake,
+            total_psnr,
+            total_ssim,
+            total_lpips,
+            float(count),
+        ],
+        device,
+    )
+
     return {
         "loss_g": total_g / max(count, 1),
         "loss_d": total_d / max(count, 1),
@@ -502,6 +552,29 @@ def val_gan_epoch(
                         "lpips": f"{total_lpips / max(count, 1):.4f}",
                     }
                 )
+
+    (
+        total_g,
+        total_d,
+        total_d_real,
+        total_d_fake,
+        total_psnr,
+        total_ssim,
+        total_lpips,
+        count,
+    ) = _ddp_reduce_totals(
+        [
+            total_g,
+            total_d,
+            total_d_real,
+            total_d_fake,
+            total_psnr,
+            total_ssim,
+            total_lpips,
+            float(count),
+        ],
+        device,
+    )
 
     return {
         "loss_g": total_g / max(count, 1),
