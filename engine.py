@@ -324,7 +324,7 @@ def train_gan_epoch(
 
         # Train D
         real_label = 0.9
-        fake_label = 0.0
+        fake_label = 0.1
         loss_d = 0.0
         d_real_prob = 0.0
         d_fake_prob = 0.0
@@ -332,7 +332,7 @@ def train_gan_epoch(
             with torch.no_grad():
                 sr = generator(lr)
             # Add Gaussian Noise to prevent D from overfitting
-            noise_std = 0.05
+            noise_std = 0.1
             if r1_weight > 0.0:
                 hr.requires_grad_(True)
             
