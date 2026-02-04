@@ -5,7 +5,21 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.nn import DataParallel
 
 
-def init_distributed():
+def init_distributed(rank=None, world_size=None, init_method=None):
+    # Explicit init (e.g., mp.spawn) takes priority.
+    if dist.is_available() and rank is not None and world_size is not None:
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        dist.init_process_group(
+            backend=backend,
+            rank=rank,
+            world_size=world_size,
+            init_method=init_method,
+        )
+        local_rank = rank
+        if torch.cuda.is_available():
+            torch.cuda.set_device(local_rank)
+        return True, local_rank
+    # Env-based init (torchrun)
     if dist.is_available() and "RANK" in os.environ and "WORLD_SIZE" in os.environ:
         backend = "nccl" if torch.cuda.is_available() else "gloo"
         dist.init_process_group(backend=backend)
@@ -30,7 +44,7 @@ def maybe_wrap_ddp(model, local_rank=0):
             return DDP(model, device_ids=[local_rank])
         return DDP(model)
     # Notebook/single-process fallback: use DataParallel to leverage multiple GPUs
-    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+    if os.environ.get("DISABLE_DP", "0") != "1" and torch.cuda.is_available() and torch.cuda.device_count() > 1:
         return DataParallel(model)
     return model
 

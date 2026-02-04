@@ -226,23 +226,27 @@ def _ddp_reduce_totals(totals, device):
     return totals
 
 
-def train_srresnet_epoch(model, loader, optimizer, device, pixel_criterion):
+def train_srresnet_epoch(model, loader, optimizer, device, pixel_criterion, use_amp=False, scaler=None):
     model.train()
     total_loss = 0.0
     total_psnr = 0.0
     total_ssim = 0.0
     count = 0
+    if scaler is None:
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     for lr, hr in loader:
         lr = lr.to(device, non_blocking=True)
         hr = hr.to(device, non_blocking=True)
 
-        sr = model(lr)
-        loss = pixel_criterion(sr, hr)
+        with torch.cuda.amp.autocast(enabled=use_amp):
+            sr = model(lr)
+            loss = pixel_criterion(sr, hr)
 
         optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         with torch.no_grad():
             sr_clip = sr.clamp(0.0, 1.0)
@@ -268,7 +272,7 @@ def train_srresnet_epoch(model, loader, optimizer, device, pixel_criterion):
     }
 
 
-def val_srresnet_epoch(model, loader, device, pixel_criterion):
+def val_srresnet_epoch(model, loader, device, pixel_criterion, use_amp=False):
     model.eval()
     total_loss = 0.0
     total_psnr = 0.0
@@ -280,8 +284,9 @@ def val_srresnet_epoch(model, loader, device, pixel_criterion):
             lr = lr.to(device, non_blocking=True)
             hr = hr.to(device, non_blocking=True)
 
-            sr = model(lr)
-            loss = pixel_criterion(sr, hr)
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                sr = model(lr)
+                loss = pixel_criterion(sr, hr)
 
             sr_clip = sr.clamp(0.0, 1.0)
             batch_psnr = psnr(sr_clip, hr)
@@ -332,6 +337,8 @@ def train_gan_epoch(
     g_steps=2,
     d_steps=1,
     r1_weight=0.0,
+    use_amp=False,
+    scaler=None,
 ):
     generator.train()
     discriminator.train()
@@ -345,6 +352,9 @@ def train_gan_epoch(
     total_lpips = 0.0
     count = 0
 
+    if scaler is None:
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+
     for lr, hr in loader:
         lr = lr.to(device, non_blocking=True)
         hr = hr.to(device, non_blocking=True)
@@ -357,7 +367,8 @@ def train_gan_epoch(
         d_fake_prob = 0.0
         for _ in range(d_steps):
             with torch.no_grad():
-                sr = generator(lr)
+                with torch.cuda.amp.autocast(enabled=use_amp):
+                    sr = generator(lr)
             # Add Gaussian Noise to prevent D from overfitting
             noise_std = 0.05
             if r1_weight > 0.0:
@@ -366,23 +377,28 @@ def train_gan_epoch(
             # Apply noise to inputs for D
             d_real_input = hr + torch.randn_like(hr) * noise_std
             d_fake_input = sr.detach() + torch.randn_like(sr) * noise_std
-            
-            d_real = discriminator(d_real_input)
-            d_fake = discriminator(d_fake_input)
-            loss_d_real = adversarial_criterion(d_real, True, real_label)
-            loss_d_fake = adversarial_criterion(d_fake, False, fake_label)
-            loss_d_step = 0.5 * (loss_d_real + loss_d_fake)
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                d_real = discriminator(d_real_input)
+                d_fake = discriminator(d_fake_input)
+                loss_d_real = adversarial_criterion(d_real, True, real_label)
+                loss_d_fake = adversarial_criterion(d_fake, False, fake_label)
+                loss_d_step = 0.5 * (loss_d_real + loss_d_fake)
+
             if r1_weight > 0.0:
-                r1_penalty = _r1_penalty(d_real, hr)
-                loss_d_step = loss_d_step + 0.5 * r1_weight * r1_penalty
+                # Compute R1 penalty in full precision for stability
+                with torch.cuda.amp.autocast(enabled=False):
+                    d_real_fp32 = discriminator(d_real_input.float())
+                    r1_penalty = _r1_penalty(d_real_fp32, hr)
+                    loss_d_step = loss_d_step + 0.5 * r1_weight * r1_penalty
 
             with torch.no_grad():
                 d_real_prob = torch.sigmoid(d_real).mean()
                 d_fake_prob = torch.sigmoid(d_fake).mean()
 
             optimizer_d.zero_grad(set_to_none=True)
-            loss_d_step.backward()
-            optimizer_d.step()
+            scaler.scale(loss_d_step).backward()
+            scaler.step(optimizer_d)
+            scaler.update()
             loss_d = loss_d_step
             if r1_weight > 0.0:
                 hr = hr.detach()
@@ -390,20 +406,22 @@ def train_gan_epoch(
         # Train G
         loss_g = 0.0
         for _ in range(g_steps):
-            sr = generator(lr)
-            d_fake_for_g = discriminator(sr)
-            loss_pixel = pixel_criterion(sr, hr)
-            loss_perc = perceptual_criterion(sr, hr)
-            loss_adv = adversarial_criterion(d_fake_for_g, True)
-            loss_g_step = (
-                weights["pixel"] * loss_pixel
-                + weights["perceptual"] * loss_perc
-                + weights["adversarial"] * loss_adv
-            )
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                sr = generator(lr)
+                d_fake_for_g = discriminator(sr)
+                loss_pixel = pixel_criterion(sr, hr)
+                loss_perc = perceptual_criterion(sr, hr)
+                loss_adv = adversarial_criterion(d_fake_for_g, True)
+                loss_g_step = (
+                    weights["pixel"] * loss_pixel
+                    + weights["perceptual"] * loss_perc
+                    + weights["adversarial"] * loss_adv
+                )
 
             optimizer_g.zero_grad(set_to_none=True)
-            loss_g_step.backward()
-            optimizer_g.step()
+            scaler.scale(loss_g_step).backward()
+            scaler.step(optimizer_g)
+            scaler.update()
             loss_g = loss_g_step
 
         with torch.no_grad():
@@ -483,6 +501,7 @@ def val_gan_epoch(
     adversarial_criterion,
     weights,
     lpips_metric=None,
+    use_amp=False,
 ):
     generator.eval()
     discriminator.eval()
@@ -502,25 +521,26 @@ def val_gan_epoch(
             lr = lr.to(device, non_blocking=True)
             hr = hr.to(device, non_blocking=True)
 
-            sr = generator(lr)
-            d_real = discriminator(hr)
-            d_fake = discriminator(sr)
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                sr = generator(lr)
+                d_real = discriminator(hr)
+                d_fake = discriminator(sr)
 
-            loss_d_real = adversarial_criterion(d_real, True)
-            loss_d_fake = adversarial_criterion(d_fake, False)
-            loss_d = 0.5 * (loss_d_real + loss_d_fake)
+                loss_d_real = adversarial_criterion(d_real, True)
+                loss_d_fake = adversarial_criterion(d_fake, False)
+                loss_d = 0.5 * (loss_d_real + loss_d_fake)
 
-            d_real_prob = torch.sigmoid(d_real).mean()
-            d_fake_prob = torch.sigmoid(d_fake).mean()
+                d_real_prob = torch.sigmoid(d_real).mean()
+                d_fake_prob = torch.sigmoid(d_fake).mean()
 
-            loss_pixel = pixel_criterion(sr, hr)
-            loss_perc = perceptual_criterion(sr, hr)
-            loss_adv = adversarial_criterion(d_fake, True)
-            loss_g = (
-                weights["pixel"] * loss_pixel
-                + weights["perceptual"] * loss_perc
-                + weights["adversarial"] * loss_adv
-            )
+                loss_pixel = pixel_criterion(sr, hr)
+                loss_perc = perceptual_criterion(sr, hr)
+                loss_adv = adversarial_criterion(d_fake, True)
+                loss_g = (
+                    weights["pixel"] * loss_pixel
+                    + weights["perceptual"] * loss_perc
+                    + weights["adversarial"] * loss_adv
+                )
 
             sr_clip = sr.clamp(0.0, 1.0)
             batch_psnr = psnr(sr_clip, hr)
