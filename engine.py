@@ -232,14 +232,15 @@ def train_srresnet_epoch(model, loader, optimizer, device, pixel_criterion, use_
     total_psnr = 0.0
     total_ssim = 0.0
     count = 0
+    device_type = device.type if hasattr(device, "type") else ("cuda" if torch.cuda.is_available() else "cpu")
     if scaler is None:
-        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        scaler = torch.amp.GradScaler(device_type, enabled=use_amp)
 
     for lr, hr in loader:
         lr = lr.to(device, non_blocking=True)
         hr = hr.to(device, non_blocking=True)
 
-        with torch.cuda.amp.autocast(enabled=use_amp):
+        with torch.amp.autocast(device_type=device_type, enabled=use_amp):
             sr = model(lr)
             loss = pixel_criterion(sr, hr)
 
@@ -278,13 +279,14 @@ def val_srresnet_epoch(model, loader, device, pixel_criterion, use_amp=False):
     total_psnr = 0.0
     total_ssim = 0.0
     count = 0
+    device_type = device.type if hasattr(device, "type") else ("cuda" if torch.cuda.is_available() else "cpu")
 
     with torch.no_grad():
         for lr, hr in loader:
             lr = lr.to(device, non_blocking=True)
             hr = hr.to(device, non_blocking=True)
 
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            with torch.amp.autocast(device_type=device_type, enabled=use_amp):
                 sr = model(lr)
                 loss = pixel_criterion(sr, hr)
 
@@ -352,8 +354,9 @@ def train_gan_epoch(
     total_lpips = 0.0
     count = 0
 
+    device_type = device.type if hasattr(device, "type") else ("cuda" if torch.cuda.is_available() else "cpu")
     if scaler is None:
-        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        scaler = torch.amp.GradScaler(device_type, enabled=use_amp)
 
     for lr, hr in loader:
         lr = lr.to(device, non_blocking=True)
@@ -367,7 +370,7 @@ def train_gan_epoch(
         d_fake_prob = 0.0
         for _ in range(d_steps):
             with torch.no_grad():
-                with torch.cuda.amp.autocast(enabled=use_amp):
+                with torch.amp.autocast(device_type=device_type, enabled=use_amp):
                     sr = generator(lr)
             # Add Gaussian Noise to prevent D from overfitting
             noise_std = 0.05
@@ -377,7 +380,7 @@ def train_gan_epoch(
             # Apply noise to inputs for D
             d_real_input = hr + torch.randn_like(hr) * noise_std
             d_fake_input = sr.detach() + torch.randn_like(sr) * noise_std
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            with torch.amp.autocast(device_type=device_type, enabled=use_amp):
                 d_real = discriminator(d_real_input)
                 d_fake = discriminator(d_fake_input)
                 loss_d_real = adversarial_criterion(d_real, True, real_label)
@@ -386,7 +389,7 @@ def train_gan_epoch(
 
             if r1_weight > 0.0:
                 # Compute R1 penalty in full precision for stability
-                with torch.cuda.amp.autocast(enabled=False):
+                with torch.amp.autocast(device_type=device_type, enabled=False):
                     d_real_fp32 = discriminator(d_real_input.float())
                     r1_penalty = _r1_penalty(d_real_fp32, hr)
                     loss_d_step = loss_d_step + 0.5 * r1_weight * r1_penalty
@@ -406,7 +409,7 @@ def train_gan_epoch(
         # Train G
         loss_g = 0.0
         for _ in range(g_steps):
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            with torch.amp.autocast(device_type=device_type, enabled=use_amp):
                 sr = generator(lr)
                 d_fake_for_g = discriminator(sr)
                 loss_pixel = pixel_criterion(sr, hr)
@@ -515,13 +518,14 @@ def val_gan_epoch(
     total_lpips = 0.0
     count = 0
 
+    device_type = device.type if hasattr(device, "type") else ("cuda" if torch.cuda.is_available() else "cpu")
     with torch.no_grad():
         torch.cuda.empty_cache()
         for lr, hr in loader:
             lr = lr.to(device, non_blocking=True)
             hr = hr.to(device, non_blocking=True)
 
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            with torch.amp.autocast(device_type=device_type, enabled=use_amp):
                 sr = generator(lr)
                 d_real = discriminator(hr)
                 d_fake = discriminator(sr)
