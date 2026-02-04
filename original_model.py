@@ -231,38 +231,38 @@ class DiscriminatorForVGG(nn.Module):
             nn.LeakyReLU(0.2, False),
             # state size. (64) x 48 x 48
             nn.Conv2d(channels, channels, (3, 3), (2, 2), (1, 1), bias=False),
-            nn.BatchNorm2d(channels),
+            nn.InstanceNorm2d(channels, affine=True),
             nn.LeakyReLU(0.2, False),
             nn.Conv2d(channels, int(2 * channels), (3, 3), (1, 1), (1, 1), bias=False),
-            nn.BatchNorm2d(int(2 * channels)),
+            nn.InstanceNorm2d(int(2 * channels), affine=True),
             nn.LeakyReLU(0.2, False),
             # state size. (128) x 24 x 24
             nn.Conv2d(
                 int(2 * channels), int(2 * channels), (3, 3), (2, 2), (1, 1), bias=False
             ),
-            nn.BatchNorm2d(int(2 * channels)),
+            nn.InstanceNorm2d(int(2 * channels), affine=True),
             nn.LeakyReLU(0.2, False),
             nn.Conv2d(
                 int(2 * channels), int(4 * channels), (3, 3), (1, 1), (1, 1), bias=False
             ),
-            nn.BatchNorm2d(int(4 * channels)),
+            nn.InstanceNorm2d(int(4 * channels), affine=True),
             nn.LeakyReLU(0.2, False),
             # state size. (256) x 12 x 12
             nn.Conv2d(
                 int(4 * channels), int(4 * channels), (3, 3), (2, 2), (1, 1), bias=False
             ),
-            nn.BatchNorm2d(int(4 * channels)),
+            nn.InstanceNorm2d(int(4 * channels), affine=True),
             nn.LeakyReLU(0.2, False),
             nn.Conv2d(
                 int(4 * channels), int(8 * channels), (3, 3), (1, 1), (1, 1), bias=False
             ),
-            nn.BatchNorm2d(int(8 * channels)),
+            nn.InstanceNorm2d(int(8 * channels), affine=True),
             nn.LeakyReLU(0.2, False),
             # state size. (512) x 6 x 6
             nn.Conv2d(
                 int(8 * channels), int(8 * channels), (3, 3), (2, 2), (1, 1), bias=False
             ),
-            nn.BatchNorm2d(int(8 * channels)),
+            nn.InstanceNorm2d(int(8 * channels), affine=True),
             nn.LeakyReLU(0.2, False),
         )
 

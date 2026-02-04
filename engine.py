@@ -345,6 +345,14 @@ def train_gan_epoch(
     generator.train()
     discriminator.train()
 
+    if r1_weight > 0.0:
+        disc = discriminator.module if hasattr(discriminator, "module") else discriminator
+        has_bn = any(isinstance(m, torch.nn.BatchNorm2d) for m in disc.modules())
+        if has_bn:
+            if not dist.is_available() or not dist.is_initialized() or dist.get_rank() == 0:
+                print("[WARN] R1 penalty with BatchNorm can cause autograd errors. Disabling R1 for stability.")
+            r1_weight = 0.0
+
     total_g = 0.0
     total_d = 0.0
     total_d_real = 0.0
@@ -376,6 +384,9 @@ def train_gan_epoch(
             noise_std = 0.05
             if r1_weight > 0.0:
                 hr.requires_grad_(True)
+                # R1 with BN can cause in-place version issues; use eval temporarily
+                discriminator.train()
+                discriminator.eval()
 
             # Apply noise to inputs for D
             d_real_input = hr + torch.randn_like(hr) * noise_std
@@ -391,6 +402,7 @@ def train_gan_epoch(
                     loss_d_step = 0.5 * (loss_d_real + loss_d_fake)
                     r1_penalty = _r1_penalty(d_real, hr)
                     loss_d_step = loss_d_step + 0.5 * r1_weight * r1_penalty
+                discriminator.train()
             else:
                 with torch.amp.autocast(device_type=device_type, enabled=use_amp):
                     d_real = discriminator(d_real_input)
