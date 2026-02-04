@@ -251,8 +251,10 @@ def train_srresnet_epoch(model, loader, optimizer, device, pixel_criterion, use_
 
         with torch.no_grad():
             sr_clip = sr.clamp(0.0, 1.0)
-            batch_psnr = psnr(sr_clip, hr)
-            batch_ssim = ssim(sr_clip, hr)
+            sr_metric = sr_clip.float()
+            hr_metric = hr.float()
+            batch_psnr = psnr(sr_metric, hr_metric)
+            batch_ssim = ssim(sr_metric, hr_metric)
 
         batch_size = lr.size(0)
         total_loss += loss.item() * batch_size
@@ -291,8 +293,10 @@ def val_srresnet_epoch(model, loader, device, pixel_criterion, use_amp=False):
                 loss = pixel_criterion(sr, hr)
 
             sr_clip = sr.clamp(0.0, 1.0)
-            batch_psnr = psnr(sr_clip, hr)
-            batch_ssim = ssim(sr_clip, hr)
+            sr_metric = sr_clip.float()
+            hr_metric = hr.float()
+            batch_psnr = psnr(sr_metric, hr_metric)
+            batch_ssim = ssim(sr_metric, hr_metric)
 
             batch_size = lr.size(0)
             total_loss += loss.item() * batch_size
@@ -446,8 +450,10 @@ def train_gan_epoch(
 
         with torch.no_grad():
             sr_clip = sr.clamp(0.0, 1.0)
-            batch_psnr = psnr(sr_clip, hr)
-            batch_ssim = ssim(sr_clip, hr)
+            sr_metric = sr_clip.float()
+            hr_metric = hr.float()
+            batch_psnr = psnr(sr_metric, hr_metric)
+            batch_ssim = ssim(sr_metric, hr_metric)
             
             if lpips_metric is not None:
                 # Inputs to LPIPS should be [-1, 1]
@@ -564,8 +570,10 @@ def val_gan_epoch(
                 )
 
             sr_clip = sr.clamp(0.0, 1.0)
-            batch_psnr = psnr(sr_clip, hr)
-            batch_ssim = ssim(sr_clip, hr)
+            sr_metric = sr_clip.float()
+            hr_metric = hr.float()
+            batch_psnr = psnr(sr_metric, hr_metric)
+            batch_ssim = ssim(sr_metric, hr_metric)
             
             if lpips_metric is not None:
                 sr_norm = sr_clip * 2.0 - 1.0
