@@ -376,23 +376,28 @@ def train_gan_epoch(
             noise_std = 0.05
             if r1_weight > 0.0:
                 hr.requires_grad_(True)
-            
+
             # Apply noise to inputs for D
             d_real_input = hr + torch.randn_like(hr) * noise_std
             d_fake_input = sr.detach() + torch.randn_like(sr) * noise_std
-            with torch.amp.autocast(device_type=device_type, enabled=use_amp):
-                d_real = discriminator(d_real_input)
-                d_fake = discriminator(d_fake_input)
-                loss_d_real = adversarial_criterion(d_real, True, real_label)
-                loss_d_fake = adversarial_criterion(d_fake, False, fake_label)
-                loss_d_step = 0.5 * (loss_d_real + loss_d_fake)
 
             if r1_weight > 0.0:
-                # Compute R1 penalty in full precision for stability
+                # Full precision forward to avoid BN state mutation across multiple forwards
                 with torch.amp.autocast(device_type=device_type, enabled=False):
-                    d_real_fp32 = discriminator(d_real_input.float())
-                    r1_penalty = _r1_penalty(d_real_fp32, hr)
+                    d_real = discriminator(d_real_input.float())
+                    d_fake = discriminator(d_fake_input.float())
+                    loss_d_real = adversarial_criterion(d_real, True, real_label)
+                    loss_d_fake = adversarial_criterion(d_fake, False, fake_label)
+                    loss_d_step = 0.5 * (loss_d_real + loss_d_fake)
+                    r1_penalty = _r1_penalty(d_real, hr)
                     loss_d_step = loss_d_step + 0.5 * r1_weight * r1_penalty
+            else:
+                with torch.amp.autocast(device_type=device_type, enabled=use_amp):
+                    d_real = discriminator(d_real_input)
+                    d_fake = discriminator(d_fake_input)
+                    loss_d_real = adversarial_criterion(d_real, True, real_label)
+                    loss_d_fake = adversarial_criterion(d_fake, False, fake_label)
+                    loss_d_step = 0.5 * (loss_d_real + loss_d_fake)
 
             with torch.no_grad():
                 d_real_prob = torch.sigmoid(d_real).mean()
