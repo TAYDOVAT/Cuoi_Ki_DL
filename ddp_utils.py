@@ -2,6 +2,7 @@ import os
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.nn import DataParallel
 
 
 def init_distributed():
@@ -28,6 +29,9 @@ def maybe_wrap_ddp(model, local_rank=0):
         if torch.cuda.is_available():
             return DDP(model, device_ids=[local_rank])
         return DDP(model)
+    # Notebook/single-process fallback: use DataParallel to leverage multiple GPUs
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        return DataParallel(model)
     return model
 
 
