@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import os
+from pathlib import Path
 
 import torch
 import torch.distributed as dist
@@ -48,6 +49,16 @@ def load_config(path):
         return json.load(f)
 
 
+def resolve_paths(cfg, base_dir):
+    paths = cfg.get("paths", {})
+    resolved = {}
+    for key, value in paths.items():
+        p = Path(value)
+        resolved[key] = str(p if p.is_absolute() else (base_dir / p).resolve())
+    cfg["paths"] = resolved
+    return cfg
+
+
 def empty_history():
     return {
         "loss_g": {"train": [], "val": []},
@@ -73,6 +84,8 @@ def load_state_flexible(model, path, device):
 def main():
     args = parse_args()
     cfg = load_config(args.config)
+    base_dir = Path(__file__).resolve().parent
+    cfg = resolve_paths(cfg, base_dir)
 
     local_rank = init_distributed()
     device = torch.device(f"cuda:{local_rank}")
