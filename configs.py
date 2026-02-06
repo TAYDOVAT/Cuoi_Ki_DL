@@ -20,11 +20,11 @@ CFG = {
         'r1_weight': 0.0,
     },
     'paths': {
-        'train_lr': 'train/train_lr',
-        'train_hr': 'train/train_hr',
-        'val_lr': 'val/val_lr',
-        'val_hr': 'val/val_hr',
-        'test_lr': 'test/test_lr',
-        'test_hr': 'test/test_hr',
+        'train_lr': '../input/train/train_lr',
+        'train_hr': '../input/train/train_hr',
+        'val_lr': '../input/val/val_lr',
+        'val_hr': '../input/val/val_hr',
+        'test_lr': '../input/test/test_lr',
+        'test_hr': '../input/test/test_hr',
     },
 }
