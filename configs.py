@@ -20,11 +20,11 @@ CFG = {
         'r1_weight': 0.0,
     },
     'paths': {
-        'train_lr': '../input/anh-ve-tinh-2/Anh_ve_tinh_2/train/train_lr',
-        'train_hr': '../input/anh-ve-tinh-2/Anh_ve_tinh_2/train/train_hr',
-        'val_lr': '../input/anh-ve-tinh-2/Anh_ve_tinh_2/val/val_lr',
-        'val_hr': '../input/anh-ve-tinh-2/Anh_ve_tinh_2/val/val_hr',
-        'test_lr': '../input/anh-ve-tinh-2/Anh_ve_tinh_2/test/test_lr',
-        'test_hr': '../input/anh-ve-tinh-2/Anh_ve_tinh_2/test/test_hr',
+        'train_lr': '../../input/anh-ve-tinh-2/Anh_ve_tinh_2/train/train_lr',
+        'train_hr': '../../input/anh-ve-tinh-2/Anh_ve_tinh_2/train/train_hr',
+        'val_lr': '../../input/anh-ve-tinh-2/Anh_ve_tinh_2/val/val_lr',
+        'val_hr': '../../input/anh-ve-tinh-2/Anh_ve_tinh_2/val/val_hr',
+        'test_lr': '../../input/anh-ve-tinh-2/Anh_ve_tinh_2/test/test_lr',
+        'test_hr': '../../input/anh-ve-tinh-2/Anh_ve_tinh_2/test/test_hr',
     },
 }
