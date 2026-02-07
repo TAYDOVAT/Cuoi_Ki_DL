@@ -7,6 +7,13 @@ CFG = {
         'num_workers': 4,
         'epochs': 100,
         'lr': 1e-4,
+        'loss': 'l1',
+        'val_batch_size': 32,
+        'use_amp': False,
+        'resume': False,
+        'checkpoint_path': 'weights/srresnet_{loss}_checkpoint.pth',
+        'lr_step': 50,
+        'lr_gamma': 0.5,
     },
     'gan': {
         'batch_size': 8,
@@ -18,6 +25,7 @@ CFG = {
         'perc_weight': 6e-3,
         'pixel_weight': 1.0,
         'r1_weight': 0.0,
+        'init_gen_path': None,
     },
     'paths': {
         'train_lr': '../../input/anh-ve-tinh-2/Anh_ve_tinh_2/train/train_lr',

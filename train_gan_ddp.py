@@ -86,6 +86,10 @@ def main():
     cfg = load_config(args.config)
     base_dir = Path(__file__).resolve().parent
     cfg = resolve_paths(cfg, base_dir)
+    init_gen_path = cfg.get("gan", {}).get("init_gen_path")
+    if init_gen_path:
+        p = Path(init_gen_path)
+        cfg["gan"]["init_gen_path"] = str(p if p.is_absolute() else (base_dir / p).resolve())
 
     local_rank = init_distributed()
     device = torch.device(f"cuda:{local_rank}")
@@ -164,9 +168,10 @@ def main():
     else:
         start_epoch = 1
         best_lpips = 100.0
-        load_state_flexible(generator, "weights/best_srresnet.pth", device)
+        init_path = cfg.get("gan", {}).get("init_gen_path") or "weights/best_srresnet.pth"
+        load_state_flexible(generator, init_path, device)
         if is_main_process():
-            print("[INFO] Loaded Generator from 'weights/best_srresnet.pth'")
+            print(f"[INFO] Loaded Generator from '{init_path}'")
             print("[INFO] Initialized fresh Discriminator")
         history = empty_history()
         if is_main_process():
