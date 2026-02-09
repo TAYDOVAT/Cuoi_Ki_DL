@@ -13,6 +13,7 @@ from tqdm.auto import tqdm
 from data import build_loader
 from original_model import SRResNet
 from losses import PixelLoss, SSIMLoss, LPIPSLoss
+import lpips
 from engine import (
     train_srresnet_epoch,
     val_srresnet_epoch,
@@ -65,15 +66,15 @@ def empty_history():
         "loss": {"train": [], "val": []},
         "psnr": {"train": [], "val": []},
         "ssim": {"train": [], "val": []},
+        "lpips": {"train": [], "val": []},
     }
 
 
-def save_srresnet_checkpoint(model, optimizer, scheduler, epoch, best_psnr, path):
+def save_srresnet_checkpoint(model, optimizer, scheduler, epoch, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     target = model.module if hasattr(model, "module") else model
     checkpoint = {
         "epoch": epoch,
-        "best_psnr": best_psnr,
         "model_state_dict": target.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
@@ -90,7 +91,7 @@ def load_srresnet_checkpoint(
 ):
     if not os.path.exists(path):
         print(f"[Checkpoint] Not found at {path}. Starting from scratch.")
-        return 1, -1.0
+        return 1
 
     print(f"[Checkpoint] Loading from {path}...")
     checkpoint = torch.load(path, map_location=device)
@@ -100,9 +101,8 @@ def load_srresnet_checkpoint(
     if scheduler and checkpoint.get("scheduler_state_dict"):
         scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
     start_epoch = checkpoint.get("epoch", 0) + 1
-    best_psnr = checkpoint.get("best_psnr", -1.0)
-    print(f"[Checkpoint] Resuming from epoch {start_epoch}, best PSNR: {best_psnr:.4f}")
-    return start_epoch, best_psnr
+    print(f"[Checkpoint] Resuming from epoch {start_epoch}")
+    return start_epoch
 
 
 def load_srresnet_history_from_log(log_path, start_epoch):
@@ -122,6 +122,12 @@ def load_srresnet_history_from_log(log_path, start_epoch):
                     history["psnr"]["val"].append(float(row["val_psnr"]))
                     history["ssim"]["train"].append(float(row["train_ssim"]))
                     history["ssim"]["val"].append(float(row["val_ssim"]))
+                    if "train_lpips" in row and "val_lpips" in row:
+                        history["lpips"]["train"].append(float(row["train_lpips"]))
+                        history["lpips"]["val"].append(float(row["val_lpips"]))
+                    else:
+                        history["lpips"]["train"].append(0.0)
+                        history["lpips"]["val"].append(0.0)
         print(f"[Log] Loaded {len(history['loss']['train'])} previous epochs from {log_path}")
     except Exception as e:
         print(f"[Log] Error loading history: {e}. Starting fresh.")
@@ -138,6 +144,8 @@ def rewrite_log_up_to_epoch(log_path, history, start_epoch):
         "val_psnr",
         "train_ssim",
         "val_ssim",
+        "train_lpips",
+        "val_lpips",
     ]
 
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -156,6 +164,8 @@ def rewrite_log_up_to_epoch(log_path, history, start_epoch):
                     history["psnr"]["val"][i],
                     history["ssim"]["train"][i],
                     history["ssim"]["val"][i],
+                    history["lpips"]["train"][i],
+                    history["lpips"]["val"][i],
                 ]
             )
 
@@ -182,6 +192,8 @@ def main():
     device = torch.device(f"cuda:{local_rank}")
 
     os.makedirs("weights", exist_ok=True)
+    epoch_weights_dir = os.path.join("weights", "srresnet", loss_name)
+    os.makedirs(epoch_weights_dir, exist_ok=True)
     os.makedirs("logs", exist_ok=True)
 
     train_dataset, train_loader = build_loader(
@@ -225,6 +237,7 @@ def main():
     )
 
     criterion = build_loss(loss_name).to(device)
+    lpips_metric = lpips.LPIPS(net="vgg").to(device)
 
     use_amp = cfg["train"].get("use_amp", False) and torch.cuda.is_available()
     device_type = "cuda"
@@ -237,7 +250,7 @@ def main():
     )
 
     if cfg["train"].get("resume", False):
-        start_epoch, best_psnr = load_srresnet_checkpoint(
+        start_epoch = load_srresnet_checkpoint(
             model=model,
             optimizer=optimizer,
             scheduler=scheduler,
@@ -251,7 +264,6 @@ def main():
             history = empty_history()
     else:
         start_epoch = 1
-        best_psnr = -1.0
         history = empty_history()
         if is_main_process():
             with open(log_path, "w", newline="") as f:
@@ -265,13 +277,15 @@ def main():
                         "val_psnr",
                         "train_ssim",
                         "val_ssim",
+                        "train_lpips",
+                        "val_lpips",
                     ]
                 )
 
     if is_main_process():
         print("\n" + "=" * 50)
         print(f"Loss: {loss_name}")
-        print(f"Starting from epoch {start_epoch}, best PSNR: {best_psnr:.4f}")
+        print(f"Starting from epoch {start_epoch}")
         print(f"Resume: {cfg['train'].get('resume', False)}")
         print("=" * 50)
 
@@ -293,6 +307,7 @@ def main():
             criterion,
             use_amp=use_amp,
             scaler=scaler,
+            lpips_metric=lpips_metric,
         )
 
         val_pbar = (
@@ -306,6 +321,7 @@ def main():
             device,
             criterion,
             use_amp=use_amp,
+            lpips_metric=lpips_metric,
         )
 
         scheduler.step()
@@ -317,6 +333,8 @@ def main():
             history["psnr"]["val"].append(val_stats["psnr"])
             history["ssim"]["train"].append(train_stats["ssim"])
             history["ssim"]["val"].append(val_stats["ssim"])
+            history["lpips"]["train"].append(train_stats["lpips"])
+            history["lpips"]["val"].append(val_stats["lpips"])
 
             with open(log_path, "a", newline="") as f:
                 writer = csv.writer(f)
@@ -329,6 +347,8 @@ def main():
                         val_stats["psnr"],
                         train_stats["ssim"],
                         val_stats["ssim"],
+                        train_stats["lpips"],
+                        val_stats["lpips"],
                     ]
                 )
 
@@ -337,32 +357,38 @@ def main():
                 optimizer=optimizer,
                 scheduler=scheduler,
                 epoch=epoch,
-                best_psnr=best_psnr,
                 path=checkpoint_path,
+            )
+            save_srresnet_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                epoch=epoch,
+                path=os.path.join(
+                    epoch_weights_dir,
+                    f"srresnet_{loss_name}_checkpoint_epoch_{epoch}.pth",
+                ),
             )
 
             torch.save(
                 (model.module if hasattr(model, "module") else model).state_dict(),
                 f"weights/last_srresnet_{loss_name}.pth",
             )
-
-            if val_stats["psnr"] > best_psnr:
-                best_psnr = val_stats["psnr"]
-                torch.save(
-                    (model.module if hasattr(model, "module") else model).state_dict(),
-                    f"weights/best_srresnet_{loss_name}.pth",
-                )
-                print(f"[NEW BEST] PSNR: {best_psnr:.4f}")
+            torch.save(
+                (model.module if hasattr(model, "module") else model).state_dict(),
+                os.path.join(
+                    epoch_weights_dir,
+                    f"srresnet_{loss_name}_epoch_{epoch}.pth",
+                ),
+            )
 
             print(
-                f"Epoch {epoch}/{epochs} | LR: {scheduler.get_last_lr()[0]:.6f} | "
-                f"Best PSNR: {best_psnr:.4f}"
+                f"Epoch {epoch}/{epochs} | LR: {scheduler.get_last_lr()[0]:.6f}"
             )
 
     if is_main_process():
         print("\n" + "=" * 50)
         print("SRResNet Training Completed!")
-        print(f"Best PSNR: {best_psnr:.4f}")
         print("=" * 50)
 
     dist.destroy_process_group()

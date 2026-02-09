@@ -226,11 +226,14 @@ def _ddp_reduce_totals(totals, device):
     return totals
 
 
-def train_srresnet_epoch(model, loader, optimizer, device, pixel_criterion, use_amp=False, scaler=None):
+def train_srresnet_epoch(
+    model, loader, optimizer, device, pixel_criterion, use_amp=False, scaler=None, lpips_metric=None
+):
     model.train()
     total_loss = 0.0
     total_psnr = 0.0
     total_ssim = 0.0
+    total_lpips = 0.0
     count = 0
     device_type = device.type if hasattr(device, "type") else ("cuda" if torch.cuda.is_available() else "cpu")
     if scaler is None:
@@ -255,31 +258,40 @@ def train_srresnet_epoch(model, loader, optimizer, device, pixel_criterion, use_
             hr_metric = hr.float()
             batch_psnr = psnr(sr_metric, hr_metric)
             batch_ssim = ssim(sr_metric, hr_metric)
+            if lpips_metric is not None:
+                sr_norm = sr_clip * 2.0 - 1.0
+                hr_norm = hr * 2.0 - 1.0
+                batch_lpips = lpips_metric(sr_norm, hr_norm).mean().item()
+            else:
+                batch_lpips = 0.0
 
         batch_size = lr.size(0)
         total_loss += loss.item() * batch_size
         total_psnr += batch_psnr * batch_size
         total_ssim += batch_ssim * batch_size
+        total_lpips += batch_lpips * batch_size
         count += batch_size
 
         _maybe_postfix(loader, loss.item(), total_psnr / max(count, 1))
 
-    total_loss, total_psnr, total_ssim, count = _ddp_reduce_totals(
-        [total_loss, total_psnr, total_ssim, float(count)], device
+    total_loss, total_psnr, total_ssim, total_lpips, count = _ddp_reduce_totals(
+        [total_loss, total_psnr, total_ssim, total_lpips, float(count)], device
     )
 
     return {
         "loss": total_loss / max(count, 1),
         "psnr": total_psnr / max(count, 1),
         "ssim": total_ssim / max(count, 1),
+        "lpips": total_lpips / max(count, 1),
     }
 
 
-def val_srresnet_epoch(model, loader, device, pixel_criterion, use_amp=False):
+def val_srresnet_epoch(model, loader, device, pixel_criterion, use_amp=False, lpips_metric=None):
     model.eval()
     total_loss = 0.0
     total_psnr = 0.0
     total_ssim = 0.0
+    total_lpips = 0.0
     count = 0
     device_type = device.type if hasattr(device, "type") else ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -297,23 +309,31 @@ def val_srresnet_epoch(model, loader, device, pixel_criterion, use_amp=False):
             hr_metric = hr.float()
             batch_psnr = psnr(sr_metric, hr_metric)
             batch_ssim = ssim(sr_metric, hr_metric)
+            if lpips_metric is not None:
+                sr_norm = sr_clip * 2.0 - 1.0
+                hr_norm = hr * 2.0 - 1.0
+                batch_lpips = lpips_metric(sr_norm, hr_norm).mean().item()
+            else:
+                batch_lpips = 0.0
 
             batch_size = lr.size(0)
             total_loss += loss.item() * batch_size
             total_psnr += batch_psnr * batch_size
             total_ssim += batch_ssim * batch_size
+            total_lpips += batch_lpips * batch_size
             count += batch_size
 
             _maybe_postfix(loader, loss.item(), total_psnr / max(count, 1))
 
-    total_loss, total_psnr, total_ssim, count = _ddp_reduce_totals(
-        [total_loss, total_psnr, total_ssim, float(count)], device
+    total_loss, total_psnr, total_ssim, total_lpips, count = _ddp_reduce_totals(
+        [total_loss, total_psnr, total_ssim, total_lpips, float(count)], device
     )
 
     return {
         "loss": total_loss / max(count, 1),
         "psnr": total_psnr / max(count, 1),
         "ssim": total_ssim / max(count, 1),
+        "lpips": total_lpips / max(count, 1),
     }
 
 
