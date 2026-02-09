@@ -61,8 +61,10 @@ def load_state_flexible(model, path, device):
         sd = sd["state_dict"]
     if isinstance(sd, dict) and "model_state_dict" in sd:
         sd = sd["model_state_dict"]
-    if isinstance(sd, dict) and sd and next(iter(sd)).startswith("module."):
-        sd = {k[len("module.") :]: v for k, v in sd.items()}
+    if isinstance(sd, dict) and sd:
+        for prefix in ("module.", "_orig_mod."):
+            if all(k.startswith(prefix) for k in sd.keys()):
+                sd = {k[len(prefix) :]: v for k, v in sd.items()}
     target = model.module if hasattr(model, "module") else model
     target.load_state_dict(sd, strict=True)
 
