@@ -55,6 +55,18 @@ def resolve_paths(cfg, base_dir):
     return cfg
 
 
+def load_state_flexible(model, path, device):
+    sd = torch.load(path, map_location=device)
+    if isinstance(sd, dict) and "state_dict" in sd:
+        sd = sd["state_dict"]
+    if isinstance(sd, dict) and "model_state_dict" in sd:
+        sd = sd["model_state_dict"]
+    if isinstance(sd, dict) and sd and next(iter(sd)).startswith("module."):
+        sd = {k[len("module.") :]: v for k, v in sd.items()}
+    target = model.module if hasattr(model, "module") else model
+    target.load_state_dict(sd, strict=True)
+
+
 def format_path(template, loss_name):
     if "{loss}" in template:
         return template.format(loss=loss_name)
@@ -185,6 +197,10 @@ def main():
     cfg = load_config(args.config)
     base_dir = Path(__file__).resolve().parent
     cfg = resolve_paths(cfg, base_dir)
+    pretrained_path = cfg.get("train", {}).get("pretrained_path")
+    if pretrained_path:
+        p = Path(pretrained_path)
+        cfg["train"]["pretrained_path"] = str(p if p.is_absolute() else (base_dir / p).resolve())
 
     loss_name = cfg.get("train", {}).get("loss", "l1").lower()
 
@@ -281,6 +297,13 @@ def main():
                         "val_lpips",
                     ]
                 )
+
+        if cfg["train"].get("load_pretrained_model", False):
+            pre_path = cfg["train"].get("pretrained_path")
+            if pre_path:
+                load_state_flexible(model, pre_path, device)
+                if is_main_process():
+                    print(f"[INFO] Loaded pretrained SRResNet from '{pre_path}'")
 
     if is_main_process():
         print("\n" + "=" * 50)

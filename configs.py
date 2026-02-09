@@ -11,6 +11,8 @@ CFG = {
         'val_batch_size': 32,
         'use_amp': False,
         'resume': False,
+        'load_pretrained_model': False,
+        'pretrained_path': 'weights/SRResNet_x4-ImageNet.pth.tar',
         'checkpoint_path': 'weights/srresnet_{loss}_checkpoint.pth',
         'lr_step': 50,
         'lr_gamma': 0.5,
