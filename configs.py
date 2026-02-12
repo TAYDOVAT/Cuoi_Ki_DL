@@ -26,6 +26,7 @@ CFG = {
         'lr_g': 1e-4,
         'lr_d': 1e-4,
         'use_amp': False,
+        'use_lpips': True,
         'g_steps': 1,
         'd_steps': 1,
         'adv_weight': 1e-3,

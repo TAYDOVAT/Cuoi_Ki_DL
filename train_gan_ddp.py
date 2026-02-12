@@ -21,7 +21,10 @@ from engine import (
     load_gan_history_from_log,
     rewrite_log_up_to_epoch,
 )
-import lpips
+try:
+    import lpips
+except ModuleNotFoundError:
+    lpips = None
 
 
 def parse_args():
@@ -162,7 +165,14 @@ def main():
     pixel_criterion = PixelLoss().to(device)
     perceptual_criterion = PerceptualLoss().to(device)
     adversarial_criterion = AdversarialLoss().to(device)
-    lpips_metric = lpips.LPIPS(net="vgg").to(device)
+    use_lpips = cfg["gan"].get("use_lpips", True)
+    lpips_metric = None
+    if use_lpips:
+        if lpips is None:
+            if is_main_process():
+                print("[WARN] 'lpips' package not found. LPIPS metric will be disabled.")
+        else:
+            lpips_metric = lpips.LPIPS(net="vgg").to(device)
 
     weights = {
         "pixel": cfg["gan"]["pixel_weight"],
