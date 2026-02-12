@@ -22,6 +22,8 @@ CFG = {
         'train_batch_size': 8,
         'val_batch_size': None,
         'num_workers': 4,
+        'pin_memory': True,
+        'persistent_workers': True,
         'epochs': 200,
         'lr_g': 1e-4,
         'lr_d': 1e-4,

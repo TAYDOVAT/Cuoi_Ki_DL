@@ -137,6 +137,8 @@ def main():
         batch_size=train_batch_size,
         num_workers=cfg["gan"]["num_workers"],
         train=True,
+        pin_memory=cfg["gan"].get("pin_memory", True),
+        persistent_workers=cfg["gan"].get("persistent_workers", True),
     )
     val_dataset, val_loader = build_loader(
         cfg["paths"]["val_lr"],
@@ -146,6 +148,8 @@ def main():
         batch_size=val_batch_size,
         num_workers=cfg["gan"]["num_workers"],
         train=False,
+        pin_memory=cfg["gan"].get("pin_memory", True),
+        persistent_workers=cfg["gan"].get("persistent_workers", True),
     )
 
     generator = SRResNet(upscale=cfg["scale"]).to(device)

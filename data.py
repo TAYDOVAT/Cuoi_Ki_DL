@@ -104,18 +104,30 @@ class PairedSRDataset(Dataset):
         return lr_tensor, hr_tensor
 
 
-def build_loader(lr_dir, hr_dir, scale, hr_crop, batch_size, num_workers, train):
+def build_loader(
+    lr_dir,
+    hr_dir,
+    scale,
+    hr_crop,
+    batch_size,
+    num_workers,
+    train,
+    pin_memory=True,
+    persistent_workers=None,
+):
     dataset = PairedSRDataset(lr_dir, hr_dir, scale=scale, hr_crop=hr_crop, train=train)
     sampler = None
     if dist.is_available() and dist.is_initialized():
         sampler = DistributedSampler(dataset, shuffle=train)
+    if persistent_workers is None:
+        persistent_workers = num_workers > 0
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=train if sampler is None else False,
         sampler=sampler,
         num_workers=num_workers,
-        pin_memory=True,
-        persistent_workers=num_workers > 0,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers and num_workers > 0,
     )
     return dataset, loader
