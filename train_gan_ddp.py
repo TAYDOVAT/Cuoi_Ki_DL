@@ -86,10 +86,17 @@ def main():
     cfg = load_config(args.config)
     base_dir = Path(__file__).resolve().parent
     cfg = resolve_paths(cfg, base_dir)
-    init_gen_path = cfg.get("gan", {}).get("init_gen_path")
-    if init_gen_path:
-        p = Path(init_gen_path)
-        cfg["gan"]["init_gen_path"] = str(p if p.is_absolute() else (base_dir / p).resolve())
+    gan_cfg = cfg.get("gan", {})
+
+    def _resolve_gan_path(key):
+        val = gan_cfg.get(key)
+        if not val:
+            return
+        p = Path(val)
+        gan_cfg[key] = str(p if p.is_absolute() else (base_dir / p).resolve())
+
+    _resolve_gan_path("init_gen_path")
+    _resolve_gan_path("checkpoint_path")
 
     local_rank = init_distributed()
     device = torch.device(f"cuda:{local_rank}")
@@ -97,17 +104,37 @@ def main():
     os.makedirs("weights", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
 
+    world_size = dist.get_world_size()
+    train_batch_size = cfg["gan"].get("train_batch_size", cfg["gan"]["batch_size"])
+    if train_batch_size <= 0:
+        raise ValueError(f"train_batch_size must be > 0, got {train_batch_size}")
+
+    raw_val_batch_size = cfg["gan"].get("val_batch_size", None)
+    if raw_val_batch_size is None:
+        val_batch_size = max(8, world_size * 4)
+    else:
+        if raw_val_batch_size <= 0:
+            raise ValueError(f"val_batch_size must be > 0, got {raw_val_batch_size}")
+        val_batch_size = int(raw_val_batch_size)
+    val_batch_size = max(world_size, val_batch_size)
+    val_batch_size = ((val_batch_size + world_size - 1) // world_size) * world_size
+
+    real_label = float(cfg["gan"].get("real_label", 0.9))
+    fake_label = float(cfg["gan"].get("fake_label", 0.0))
+    if not (0.0 <= real_label <= 1.0 and 0.0 <= fake_label <= 1.0):
+        raise ValueError(
+            f"real_label and fake_label must be in [0, 1], got {real_label}, {fake_label}"
+        )
+
     train_dataset, train_loader = build_loader(
         cfg["paths"]["train_lr"],
         cfg["paths"]["train_hr"],
         scale=cfg["scale"],
         hr_crop=cfg["hr_crop"],
-        batch_size=cfg["gan"]["batch_size"],
+        batch_size=train_batch_size,
         num_workers=cfg["gan"]["num_workers"],
         train=True,
     )
-    val_batch_size = max(8, dist.get_world_size() * 4)
-    val_batch_size = (val_batch_size // dist.get_world_size()) * dist.get_world_size()
     val_dataset, val_loader = build_loader(
         cfg["paths"]["val_lr"],
         cfg["paths"]["val_hr"],
@@ -147,6 +174,29 @@ def main():
     device_type = "cuda"
     scaler = torch.amp.GradScaler(device_type, enabled=use_amp)
 
+    def write_log_header(path):
+        with open(path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "epoch",
+                    "train_loss_g",
+                    "val_loss_g",
+                    "train_loss_d",
+                    "val_loss_d",
+                    "train_d_real_prob",
+                    "val_d_real_prob",
+                    "train_d_fake_prob",
+                    "val_d_fake_prob",
+                    "train_psnr",
+                    "val_psnr",
+                    "train_ssim",
+                    "val_ssim",
+                    "train_lpips",
+                    "val_lpips",
+                ]
+            )
+
     log_path = os.path.join("logs", "gan_log.csv")
     if cfg["gan"]["resume"]:
         start_epoch, best_lpips = load_gan_checkpoint(
@@ -156,8 +206,8 @@ def main():
             optimizer_d=optimizer_d,
             scheduler_g=scheduler_g,
             scheduler_d=scheduler_d,
+            scaler=scaler,
             path=cfg["gan"]["checkpoint_path"],
-            load_disc=cfg["gan"]["load_disc"],
             device=device,
         )
         if is_main_process():
@@ -168,39 +218,24 @@ def main():
     else:
         start_epoch = 1
         best_lpips = 100.0
-        init_path = cfg.get("gan", {}).get("init_gen_path") or "weights/best_srresnet.pth"
+        init_path = cfg["gan"].get("init_gen_path") or "weights/best_srresnet.pth"
         load_state_flexible(generator, init_path, device)
         if is_main_process():
             print(f"[INFO] Loaded Generator from '{init_path}'")
             print("[INFO] Initialized fresh Discriminator")
         history = empty_history()
         if is_main_process():
-            with open(log_path, "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(
-                    [
-                        "epoch",
-                        "train_loss_g",
-                        "val_loss_g",
-                        "train_loss_d",
-                        "val_loss_d",
-                        "train_d_real_prob",
-                        "val_d_real_prob",
-                        "train_d_fake_prob",
-                        "val_d_fake_prob",
-                        "train_psnr",
-                        "val_psnr",
-                        "train_ssim",
-                        "val_ssim",
-                        "train_lpips",
-                        "val_lpips",
-                    ]
-                )
+            write_log_header(log_path)
 
     if is_main_process():
         print("\n" + "=" * 50)
         print(f"Starting from epoch {start_epoch}, best LPIPS: {best_lpips:.4f}")
-        print(f"Resume: {cfg['gan']['resume']}, Load Disc: {cfg['gan']['load_disc']}")
+        print(f"Resume: {cfg['gan']['resume']}")
+        print(
+            f"Train batch size: {train_batch_size} | "
+            f"Val batch size (effective): {val_batch_size}"
+        )
+        print(f"Train labels: real_label={real_label}, fake_label={fake_label}")
         print("=" * 50)
 
     epochs = cfg["gan"]["epochs"]
@@ -228,6 +263,8 @@ def main():
             g_steps=cfg["gan"].get("g_steps", 1),
             d_steps=cfg["gan"].get("d_steps", 1),
             r1_weight=cfg["gan"].get("r1_weight", 0.0),
+            real_label=real_label,
+            fake_label=fake_label,
             use_amp=use_amp,
             scaler=scaler,
         )
@@ -291,18 +328,6 @@ def main():
                     ]
                 )
 
-            save_gan_checkpoint(
-                generator=generator,
-                discriminator=discriminator,
-                optimizer_g=optimizer_g,
-                optimizer_d=optimizer_d,
-                scheduler_g=scheduler_g,
-                scheduler_d=scheduler_d,
-                epoch=epoch,
-                best_lpips=best_lpips,
-                path=cfg["gan"]["checkpoint_path"],
-            )
-
             if val_stats["lpips"] < best_lpips:
                 best_lpips = val_stats["lpips"]
                 gen_to_save = (
@@ -316,6 +341,27 @@ def main():
                 torch.save(gen_to_save.state_dict(), "weights/best_gan.pth")
                 torch.save(disc_to_save.state_dict(), "weights/best_disc.pth")
                 print(f"[NEW BEST] LPIPS: {best_lpips:.4f}")
+
+            epoch_dir = os.path.join("weights", f"srgan_{epoch}")
+            os.makedirs(epoch_dir, exist_ok=True)
+            epoch_gen_path = os.path.join(epoch_dir, f"gen_{epoch}.pth")
+            epoch_ckpt_path = os.path.join(epoch_dir, f"checkpoint_srgan_{epoch}.pth")
+
+            gen_to_save = generator.module if hasattr(generator, "module") else generator
+            torch.save(gen_to_save.state_dict(), epoch_gen_path)
+            save_gan_checkpoint(
+                generator=generator,
+                discriminator=discriminator,
+                optimizer_g=optimizer_g,
+                optimizer_d=optimizer_d,
+                scheduler_g=scheduler_g,
+                scheduler_d=scheduler_d,
+                epoch=epoch,
+                best_lpips=best_lpips,
+                scaler=scaler,
+                train_config=cfg,
+                path=epoch_ckpt_path,
+            )
 
             print(
                 f"Epoch {epoch}/{epochs} | LR_G: {scheduler_g.get_last_lr()[0]:.6f} | "

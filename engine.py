@@ -2,6 +2,7 @@ import torch
 import torch.distributed as dist
 import os
 import csv
+from datetime import datetime, timezone
 from metrics import psnr, ssim
 
 
@@ -17,6 +18,8 @@ def save_gan_checkpoint(
     scheduler_d,
     epoch,
     best_lpips,
+    scaler=None,
+    train_config=None,
     path="weights/gan_checkpoint.pth",
 ):
     """Save GAN checkpoint with all training states."""
@@ -34,6 +37,12 @@ def save_gan_checkpoint(
         "optimizer_d_state_dict": optimizer_d.state_dict(),
         "scheduler_g_state_dict": scheduler_g.state_dict() if scheduler_g else None,
         "scheduler_d_state_dict": scheduler_d.state_dict() if scheduler_d else None,
+        "scaler_state_dict": scaler.state_dict() if scaler and scaler.is_enabled() else None,
+        "train_config": train_config,
+        "meta": {
+            "saved_at_utc": datetime.now(timezone.utc).isoformat(),
+            "torch_version": torch.__version__,
+        },
     }
     torch.save(checkpoint, path)
 
@@ -45,23 +54,19 @@ def load_gan_checkpoint(
     optimizer_d,
     scheduler_g=None,
     scheduler_d=None,
+    scaler=None,
     path="weights/gan_checkpoint.pth",
-    load_disc=True,
     device="cuda",
 ):
     """
     Load GAN checkpoint and restore all training states.
 
-    Args:
-        load_disc: If True, load discriminator weights. If False, only load generator.
-
     Returns:
         start_epoch: Epoch to resume from (1-indexed)
-        best_psnr: Best PSNR achieved so far
+        best_lpips: Best LPIPS achieved so far
     """
     if not os.path.exists(path):
-        print(f"[Checkpoint] Not found at {path}. Starting from scratch.")
-        return 1, 100.0
+        raise FileNotFoundError(f"Checkpoint not found: {path}")
 
     print(f"[Checkpoint] Loading from {path}...")
     checkpoint = torch.load(path, map_location=device)
@@ -76,15 +81,15 @@ def load_gan_checkpoint(
         scheduler_g.load_state_dict(checkpoint["scheduler_g_state_dict"])
     print("[Checkpoint] Generator weights loaded.")
 
-    # Load discriminator (optional)
-    if load_disc:
-        disc.load_state_dict(checkpoint["discriminator_state_dict"])
-        optimizer_d.load_state_dict(checkpoint["optimizer_d_state_dict"])
-        if scheduler_d and checkpoint.get("scheduler_d_state_dict"):
-            scheduler_d.load_state_dict(checkpoint["scheduler_d_state_dict"])
-        print("[Checkpoint] Discriminator weights loaded.")
-    else:
-        print("[Checkpoint] Discriminator weights SKIPPED (load_disc=False).")
+    disc.load_state_dict(checkpoint["discriminator_state_dict"])
+    optimizer_d.load_state_dict(checkpoint["optimizer_d_state_dict"])
+    if scheduler_d and checkpoint.get("scheduler_d_state_dict"):
+        scheduler_d.load_state_dict(checkpoint["scheduler_d_state_dict"])
+    print("[Checkpoint] Discriminator weights loaded.")
+
+    if scaler is not None and checkpoint.get("scaler_state_dict"):
+        scaler.load_state_dict(checkpoint["scaler_state_dict"])
+        print("[Checkpoint] AMP scaler state loaded.")
 
     start_epoch = checkpoint["epoch"] + 1  # Resume from next epoch
     best_lpips = checkpoint.get("best_lpips", 100.0)
@@ -363,6 +368,8 @@ def train_gan_epoch(
     g_steps=2,
     d_steps=1,
     r1_weight=0.0,
+    real_label=0.9,
+    fake_label=0.0,
     use_amp=False,
     scaler=None,
 ):
@@ -395,8 +402,6 @@ def train_gan_epoch(
         hr = hr.to(device, non_blocking=True)
 
         # Train D
-        real_label = 0.9
-        fake_label = 0.0
         loss_d = 0.0
         d_real_prob = 0.0
         d_fake_prob = 0.0
