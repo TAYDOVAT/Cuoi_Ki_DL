@@ -41,7 +41,7 @@ def save_gan_checkpoint(
         "train_config": train_config,
         "meta": {
             "saved_at_utc": datetime.now(timezone.utc).isoformat(),
-            "torch_version": torch.__version__,
+            "torch_version": str(torch.__version__),
         },
     }
     torch.save(checkpoint, path)
@@ -69,7 +69,11 @@ def load_gan_checkpoint(
         raise FileNotFoundError(f"Checkpoint not found: {path}")
 
     print(f"[Checkpoint] Loading from {path}...")
-    checkpoint = torch.load(path, map_location=device)
+    try:
+        checkpoint = torch.load(path, map_location=device, weights_only=False)
+    except TypeError:
+        # Backward compatibility with older PyTorch versions.
+        checkpoint = torch.load(path, map_location=device)
 
     # Load generator (always)
     gen = generator.module if hasattr(generator, "module") else generator

@@ -75,7 +75,10 @@ def empty_history():
 
 
 def load_state_flexible(model, path, device):
-    sd = torch.load(path, map_location=device)
+    try:
+        sd = torch.load(path, map_location=device, weights_only=True)
+    except TypeError:
+        sd = torch.load(path, map_location=device)
     if isinstance(sd, dict) and "state_dict" in sd:
         sd = sd["state_dict"]
     if isinstance(sd, dict) and sd and next(iter(sd)).startswith("module."):
@@ -389,8 +392,9 @@ def main():
         print(f"Best LPIPS: {best_lpips:.4f}")
         print("=" * 50)
 
-    dist.destroy_process_group()
-
-
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()
