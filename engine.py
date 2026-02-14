@@ -368,6 +368,8 @@ def train_gan_epoch(
     perceptual_criterion,
     adversarial_criterion,
     weights,
+    g_loss_mode="srgan",
+    lpips_criterion=None,
     lpips_metric=None,
     g_steps=2,
     d_steps=1,
@@ -462,14 +464,26 @@ def train_gan_epoch(
             with torch.amp.autocast(device_type=device_type, enabled=use_amp):
                 sr = generator(lr)
                 d_fake_for_g = discriminator(sr)
-                loss_pixel = pixel_criterion(sr, hr)
-                loss_perc = perceptual_criterion(sr, hr)
                 loss_adv = adversarial_criterion(d_fake_for_g, True)
-                loss_g_step = (
-                    weights["pixel"] * loss_pixel
-                    + weights["perceptual"] * loss_perc
-                    + weights["adversarial"] * loss_adv
-                )
+                if g_loss_mode == "srgan":
+                    loss_perc = perceptual_criterion(sr, hr)
+                    loss_g_step = (
+                        weights["perceptual"] * loss_perc
+                        + weights["adversarial"] * loss_adv
+                    )
+                elif g_loss_mode == "lpips_adv":
+                    if lpips_criterion is None:
+                        raise RuntimeError(
+                            "lpips_criterion is required when g_loss_mode='lpips_adv'."
+                        )
+                    with torch.amp.autocast(device_type=device_type, enabled=False):
+                        loss_lpips = lpips_criterion(sr.float(), hr.float())
+                    loss_g_step = (
+                        weights["lpips"] * loss_lpips
+                        + weights["adversarial"] * loss_adv
+                    )
+                else:
+                    raise ValueError(f"Unsupported g_loss_mode: {g_loss_mode}")
 
             optimizer_g.zero_grad(set_to_none=True)
             scaler.scale(loss_g_step).backward()
@@ -555,6 +569,8 @@ def val_gan_epoch(
     perceptual_criterion,
     adversarial_criterion,
     weights,
+    g_loss_mode="srgan",
+    lpips_criterion=None,
     lpips_metric=None,
     use_amp=False,
 ):
@@ -589,14 +605,26 @@ def val_gan_epoch(
                 d_real_prob = torch.sigmoid(d_real).mean()
                 d_fake_prob = torch.sigmoid(d_fake).mean()
 
-                loss_pixel = pixel_criterion(sr, hr)
-                loss_perc = perceptual_criterion(sr, hr)
                 loss_adv = adversarial_criterion(d_fake, True)
-                loss_g = (
-                    weights["pixel"] * loss_pixel
-                    + weights["perceptual"] * loss_perc
-                    + weights["adversarial"] * loss_adv
-                )
+                if g_loss_mode == "srgan":
+                    loss_perc = perceptual_criterion(sr, hr)
+                    loss_g = (
+                        weights["perceptual"] * loss_perc
+                        + weights["adversarial"] * loss_adv
+                    )
+                elif g_loss_mode == "lpips_adv":
+                    if lpips_criterion is None:
+                        raise RuntimeError(
+                            "lpips_criterion is required when g_loss_mode='lpips_adv'."
+                        )
+                    with torch.amp.autocast(device_type=device_type, enabled=False):
+                        loss_lpips = lpips_criterion(sr.float(), hr.float())
+                    loss_g = (
+                        weights["lpips"] * loss_lpips
+                        + weights["adversarial"] * loss_adv
+                    )
+                else:
+                    raise ValueError(f"Unsupported g_loss_mode: {g_loss_mode}")
 
             sr_clip = sr.clamp(0.0, 1.0)
             sr_metric = sr_clip.float()

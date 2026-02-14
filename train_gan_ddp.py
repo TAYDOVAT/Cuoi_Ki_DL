@@ -12,7 +12,7 @@ from tqdm.auto import tqdm
 
 from data import build_loader
 from original_model import SRResNet, DiscriminatorForVGG
-from losses import PixelLoss, PerceptualLoss, AdversarialLoss
+from losses import PixelLoss, PerceptualLoss, AdversarialLoss, LPIPSLoss
 from engine import (
     train_gan_epoch,
     val_gan_epoch,
@@ -131,6 +131,13 @@ def main():
         raise ValueError(
             f"real_label and fake_label must be in [0, 1], got {real_label}, {fake_label}"
         )
+    g_loss_mode = str(cfg["gan"].get("g_loss_mode", "srgan")).lower()
+    valid_g_loss_modes = {"srgan", "lpips_adv"}
+    if g_loss_mode not in valid_g_loss_modes:
+        raise ValueError(
+            f"Unsupported gan.g_loss_mode='{g_loss_mode}'. "
+            f"Expected one of {sorted(valid_g_loss_modes)}"
+        )
 
     train_dataset, train_loader = build_loader(
         cfg["paths"]["train_lr"],
@@ -172,6 +179,16 @@ def main():
     pixel_criterion = PixelLoss().to(device)
     perceptual_criterion = PerceptualLoss().to(device)
     adversarial_criterion = AdversarialLoss().to(device)
+    lpips_criterion = None
+    if g_loss_mode == "lpips_adv":
+        try:
+            lpips_criterion = LPIPSLoss(net="vgg").to(device)
+        except ModuleNotFoundError as e:
+            raise RuntimeError(
+                "gan.g_loss_mode='lpips_adv' requires the 'lpips' package. "
+                "Install it first (e.g. `pip install lpips`)."
+            ) from e
+
     use_lpips = cfg["gan"].get("use_lpips", True)
     lpips_metric = None
     if use_lpips:
@@ -184,6 +201,7 @@ def main():
     weights = {
         "pixel": cfg["gan"]["pixel_weight"],
         "perceptual": cfg["gan"]["perc_weight"],
+        "lpips": cfg["gan"].get("lpips_weight", 1.0),
         "adversarial": cfg["gan"]["adv_weight"],
     }
 
@@ -252,6 +270,11 @@ def main():
             f"Train batch size: {train_batch_size} | "
             f"Val batch size (effective): {val_batch_size}"
         )
+        print(
+            f"G loss mode: {g_loss_mode} | "
+            f"weights(perceptual={weights['perceptual']}, "
+            f"lpips={weights['lpips']}, adversarial={weights['adversarial']})"
+        )
         print(f"Train labels: real_label={real_label}, fake_label={fake_label}")
         print("=" * 50)
 
@@ -276,6 +299,8 @@ def main():
             perceptual_criterion,
             adversarial_criterion,
             weights,
+            g_loss_mode=g_loss_mode,
+            lpips_criterion=lpips_criterion,
             lpips_metric=lpips_metric,
             g_steps=cfg["gan"].get("g_steps", 1),
             d_steps=cfg["gan"].get("d_steps", 1),
@@ -300,6 +325,8 @@ def main():
             perceptual_criterion,
             adversarial_criterion,
             weights,
+            g_loss_mode=g_loss_mode,
+            lpips_criterion=lpips_criterion,
             lpips_metric=lpips_metric,
             use_amp=use_amp,
         )
