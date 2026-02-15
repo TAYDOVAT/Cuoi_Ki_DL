@@ -14,6 +14,7 @@ from data import build_loader
 from original_model import SRResNet, DiscriminatorForVGG
 from losses import PixelLoss, PerceptualLoss, AdversarialLoss, LPIPSLoss
 from engine import (
+    GAN_LOG_FIELDS,
     train_gan_epoch,
     val_gan_epoch,
     save_gan_checkpoint,
@@ -71,6 +72,9 @@ def empty_history():
         "lpips": {"train": [], "val": []},
         "d_real_prob": {"train": [], "val": []},
         "d_fake_prob": {"train": [], "val": []},
+        "loss_adv": {"train": [], "val": []},
+        "loss_lpips_core": {"train": [], "val": []},
+        "noise_std": [],
     }
 
 
@@ -85,6 +89,33 @@ def load_state_flexible(model, path, device):
         sd = {k[len("module.") :]: v for k, v in sd.items()}
     target = model.module if hasattr(model, "module") else model
     target.load_state_dict(sd, strict=True)
+
+
+def build_scheduler(optimizer, gan_cfg):
+    scheduler_type = str(gan_cfg.get("scheduler_type", "multistep")).lower()
+    gamma = float(gan_cfg.get("gamma", 0.5))
+
+    if scheduler_type == "multistep":
+        milestones = gan_cfg.get("milestones", [60, 90])
+        if not isinstance(milestones, list) or not milestones:
+            raise ValueError(
+                f"gan.milestones must be a non-empty list for multistep scheduler, got {milestones}"
+            )
+        milestones = sorted(int(m) for m in milestones)
+        return lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma)
+
+    if scheduler_type == "step":
+        step_size = int(gan_cfg.get("lr_step", 30))
+        if step_size <= 0:
+            raise ValueError(f"gan.lr_step must be > 0, got {step_size}")
+        return lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
+
+    if scheduler_type in {"none", "constant"}:
+        return None
+
+    raise ValueError(
+        f"Unsupported gan.scheduler_type='{scheduler_type}'. Expected one of ['multistep', 'step', 'none', 'constant']"
+    )
 
 
 def main():
@@ -131,6 +162,19 @@ def main():
         raise ValueError(
             f"real_label and fake_label must be in [0, 1], got {real_label}, {fake_label}"
         )
+    val_use_train_labels = bool(cfg["gan"].get("val_use_train_labels", True))
+    r1_interval = int(cfg["gan"].get("r1_interval", 16))
+    if r1_interval <= 0:
+        raise ValueError(f"r1_interval must be > 0, got {r1_interval}")
+    d_noise_std_start = float(cfg["gan"].get("d_noise_std_start", 0.02))
+    d_noise_std_end = float(cfg["gan"].get("d_noise_std_end", 0.0))
+    d_noise_decay_epochs = int(cfg["gan"].get("d_noise_decay_epochs", 40))
+    if d_noise_decay_epochs <= 0:
+        raise ValueError(f"d_noise_decay_epochs must be > 0, got {d_noise_decay_epochs}")
+    if d_noise_std_start < 0.0 or d_noise_std_end < 0.0:
+        raise ValueError(
+            f"d_noise_std_start and d_noise_std_end must be >= 0, got {d_noise_std_start}, {d_noise_std_end}"
+        )
     g_loss_mode = str(cfg["gan"].get("g_loss_mode", "srgan")).lower()
     valid_g_loss_modes = {"srgan", "lpips_adv"}
     if g_loss_mode not in valid_g_loss_modes:
@@ -173,8 +217,8 @@ def main():
 
     optimizer_g = optim.Adam(generator.parameters(), lr=cfg["gan"]["lr_g"])
     optimizer_d = optim.Adam(discriminator.parameters(), lr=cfg["gan"]["lr_d"])
-    scheduler_g = lr_scheduler.StepLR(optimizer_g, step_size=10000, gamma=0.5)
-    scheduler_d = lr_scheduler.StepLR(optimizer_d, step_size=10000, gamma=0.5)
+    scheduler_g = build_scheduler(optimizer_g, cfg["gan"])
+    scheduler_d = build_scheduler(optimizer_d, cfg["gan"])
 
     pixel_criterion = PixelLoss().to(device)
     perceptual_criterion = PerceptualLoss().to(device)
@@ -212,25 +256,7 @@ def main():
     def write_log_header(path):
         with open(path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(
-                [
-                    "epoch",
-                    "train_loss_g",
-                    "val_loss_g",
-                    "train_loss_d",
-                    "val_loss_d",
-                    "train_d_real_prob",
-                    "val_d_real_prob",
-                    "train_d_fake_prob",
-                    "val_d_fake_prob",
-                    "train_psnr",
-                    "val_psnr",
-                    "train_ssim",
-                    "val_ssim",
-                    "train_lpips",
-                    "val_lpips",
-                ]
-            )
+            writer.writerow(GAN_LOG_FIELDS)
 
     log_path = os.path.join("logs", "gan_log.csv")
     if cfg["gan"]["resume"]:
@@ -275,7 +301,19 @@ def main():
             f"weights(perceptual={weights['perceptual']}, "
             f"lpips={weights['lpips']}, adversarial={weights['adversarial']})"
         )
-        print(f"Train labels: real_label={real_label}, fake_label={fake_label}")
+        print(
+            f"Labels(train): real={real_label}, fake={fake_label} | "
+            f"Val uses train labels: {val_use_train_labels}"
+        )
+        print(
+            f"D noise schedule: start={d_noise_std_start}, end={d_noise_std_end}, "
+            f"decay_epochs={d_noise_decay_epochs}"
+        )
+        print(
+            f"R1: weight={cfg['gan'].get('r1_weight', 0.0)}, interval={r1_interval} | "
+            f"G:D steps={cfg['gan'].get('g_steps', 1)}:{cfg['gan'].get('d_steps', 1)}"
+        )
+        print(f"Scheduler: {cfg['gan'].get('scheduler_type', 'multistep')}")
         print("=" * 50)
 
     epochs = cfg["gan"]["epochs"]
@@ -302,9 +340,14 @@ def main():
             g_loss_mode=g_loss_mode,
             lpips_criterion=lpips_criterion,
             lpips_metric=lpips_metric,
+            epoch_idx=epoch,
             g_steps=cfg["gan"].get("g_steps", 1),
             d_steps=cfg["gan"].get("d_steps", 1),
             r1_weight=cfg["gan"].get("r1_weight", 0.0),
+            r1_interval=r1_interval,
+            d_noise_std_start=d_noise_std_start,
+            d_noise_std_end=d_noise_std_end,
+            d_noise_decay_epochs=d_noise_decay_epochs,
             real_label=real_label,
             fake_label=fake_label,
             use_amp=use_amp,
@@ -328,11 +371,16 @@ def main():
             g_loss_mode=g_loss_mode,
             lpips_criterion=lpips_criterion,
             lpips_metric=lpips_metric,
+            real_label=real_label,
+            fake_label=fake_label,
+            val_use_train_labels=val_use_train_labels,
             use_amp=use_amp,
         )
 
-        scheduler_g.step()
-        scheduler_d.step()
+        if scheduler_g is not None:
+            scheduler_g.step()
+        if scheduler_d is not None:
+            scheduler_d.step()
 
         if is_main_process():
             history["loss_g"]["train"].append(train_stats["loss_g"])
@@ -349,6 +397,11 @@ def main():
             history["ssim"]["val"].append(val_stats["ssim"])
             history["lpips"]["train"].append(train_stats["lpips"])
             history["lpips"]["val"].append(val_stats["lpips"])
+            history["loss_adv"]["train"].append(train_stats["loss_adv"])
+            history["loss_adv"]["val"].append(val_stats["loss_adv"])
+            history["loss_lpips_core"]["train"].append(train_stats["loss_lpips_core"])
+            history["loss_lpips_core"]["val"].append(val_stats["loss_lpips_core"])
+            history["noise_std"].append(train_stats["noise_std"])
 
             with open(log_path, "a", newline="") as f:
                 writer = csv.writer(f)
@@ -369,6 +422,11 @@ def main():
                         val_stats["ssim"],
                         train_stats["lpips"],
                         val_stats["lpips"],
+                        train_stats["loss_adv"],
+                        val_stats["loss_adv"],
+                        train_stats["loss_lpips_core"],
+                        val_stats["loss_lpips_core"],
+                        train_stats["noise_std"],
                     ]
                 )
 
@@ -407,9 +465,10 @@ def main():
                 path=epoch_ckpt_path,
             )
 
+            lr_g = optimizer_g.param_groups[0]["lr"]
+            lr_d = optimizer_d.param_groups[0]["lr"]
             print(
-                f"Epoch {epoch}/{epochs} | LR_G: {scheduler_g.get_last_lr()[0]:.6f} | "
-                f"LR_D: {scheduler_d.get_last_lr()[0]:.6f}"
+                f"Epoch {epoch}/{epochs} | LR_G: {lr_g:.6f} | LR_D: {lr_d:.6f}"
             )
             print(f"Best LPIPS: {best_lpips:.4f}")
 

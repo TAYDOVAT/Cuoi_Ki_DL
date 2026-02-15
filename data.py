@@ -34,8 +34,32 @@ class PairedSRDataset(Dataset):
     def _pair_key(path):
         name = os.path.splitext(os.path.basename(path))[0].lower()
         name = re.sub(r'(?:_?lr|_?hr)$', '', name)
-        digits = re.findall(r'\d+', name)
-        return digits[0] if digits else name
+        return name
+
+    def _build_map_with_collision_check(self, files, side):
+        keyed = {}
+        collisions = {}
+        for path in files:
+            key = self._pair_key(path)
+            if key in keyed:
+                collisions.setdefault(key, [keyed[key]]).append(path)
+            else:
+                keyed[key] = path
+
+        if collisions:
+            lines = []
+            for key, paths in sorted(collisions.items()):
+                shown = ", ".join(os.path.basename(p) for p in paths[:5])
+                extra = ""
+                if len(paths) > 5:
+                    extra = f", ... (+{len(paths) - 5} more)"
+                lines.append(f"key='{key}': {shown}{extra}")
+            detail = "\n".join(lines)
+            raise ValueError(
+                f"Duplicate {side} pair keys detected. Rename files to be unique after stripping _lr/_hr.\n{detail}"
+            )
+
+        return keyed
 
     def _build_pairs(self, lr_dir, hr_dir):
         lr_files = [
@@ -47,8 +71,8 @@ class PairedSRDataset(Dataset):
             if os.path.isfile(os.path.join(hr_dir, f))
         ]
 
-        lr_map = {self._pair_key(p): p for p in lr_files}
-        hr_map = {self._pair_key(p): p for p in hr_files}
+        lr_map = self._build_map_with_collision_check(lr_files, side="LR")
+        hr_map = self._build_map_with_collision_check(hr_files, side="HR")
         keys = sorted(set(lr_map) & set(hr_map), key=self._nat_key)
         pairs = [(lr_map[k], hr_map[k]) for k in keys]
         if not pairs:

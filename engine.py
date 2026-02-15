@@ -5,6 +5,41 @@ import csv
 from datetime import datetime, timezone
 from metrics import psnr, ssim
 
+GAN_LOG_FIELDS = [
+    "epoch",
+    "train_loss_g",
+    "val_loss_g",
+    "train_loss_d",
+    "val_loss_d",
+    "train_d_real_prob",
+    "val_d_real_prob",
+    "train_d_fake_prob",
+    "val_d_fake_prob",
+    "train_psnr",
+    "val_psnr",
+    "train_ssim",
+    "val_ssim",
+    "train_lpips",
+    "val_lpips",
+    "train_loss_adv",
+    "val_loss_adv",
+    "train_loss_lpips_core",
+    "val_loss_lpips_core",
+    "noise_std",
+]
+
+GAN_HISTORY_FIELDS = [
+    "loss_g",
+    "loss_d",
+    "psnr",
+    "ssim",
+    "lpips",
+    "d_real_prob",
+    "d_fake_prob",
+    "loss_adv",
+    "loss_lpips_core",
+]
+
 
 # ==================== Checkpoint Functions ====================
 
@@ -102,6 +137,34 @@ def load_gan_checkpoint(
     return start_epoch, best_lpips
 
 
+def _empty_gan_history():
+    history = {name: {"train": [], "val": []} for name in GAN_HISTORY_FIELDS}
+    history["noise_std"] = []
+    return history
+
+
+def _row_float(row, key, default=0.0):
+    value = row.get(key, default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _history_value(history, key, split, idx, default=0.0):
+    series = history.get(key, {}).get(split, [])
+    if idx < len(series):
+        return series[idx]
+    return default
+
+
+def _history_scalar_value(history, key, idx, default=0.0):
+    series = history.get(key, [])
+    if idx < len(series):
+        return series[idx]
+    return default
+
+
 def load_gan_history_from_log(log_path, start_epoch):
     """
     Load existing training history from CSV log file.
@@ -113,15 +176,7 @@ def load_gan_history_from_log(log_path, start_epoch):
     Returns:
         history dict with lists for each metric
     """
-    history = {
-        "loss_g": {"train": [], "val": []},
-        "loss_d": {"train": [], "val": []},
-        "psnr": {"train": [], "val": []},
-        "ssim": {"train": [], "val": []},
-        "lpips": {"train": [], "val": []},
-        "d_real_prob": {"train": [], "val": []},
-        "d_fake_prob": {"train": [], "val": []},
-    }
+    history = _empty_gan_history()
 
     if not os.path.exists(log_path) or start_epoch <= 1:
         return history
@@ -130,30 +185,47 @@ def load_gan_history_from_log(log_path, start_epoch):
         with open(log_path, "r", newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                epoch = int(row["epoch"])
+                epoch = int(row.get("epoch", 0))
                 if epoch < start_epoch:
-                    history["loss_g"]["train"].append(float(row["train_loss_g"]))
-                    history["loss_g"]["val"].append(float(row["val_loss_g"]))
-                    history["loss_d"]["train"].append(float(row["train_loss_d"]))
-                    history["loss_d"]["val"].append(float(row["val_loss_d"]))
+                    history["loss_g"]["train"].append(
+                        _row_float(row, "train_loss_g", 0.0)
+                    )
+                    history["loss_g"]["val"].append(_row_float(row, "val_loss_g", 0.0))
+                    history["loss_d"]["train"].append(
+                        _row_float(row, "train_loss_d", 0.0)
+                    )
+                    history["loss_d"]["val"].append(_row_float(row, "val_loss_d", 0.0))
                     history["d_real_prob"]["train"].append(
-                        float(row["train_d_real_prob"])
+                        _row_float(row, "train_d_real_prob", 0.0)
                     )
-                    history["d_real_prob"]["val"].append(float(row["val_d_real_prob"]))
+                    history["d_real_prob"]["val"].append(
+                        _row_float(row, "val_d_real_prob", 0.0)
+                    )
                     history["d_fake_prob"]["train"].append(
-                        float(row["train_d_fake_prob"])
+                        _row_float(row, "train_d_fake_prob", 0.0)
                     )
-                    history["d_fake_prob"]["val"].append(float(row["val_d_fake_prob"]))
-                    history["psnr"]["train"].append(float(row["train_psnr"]))
-                    history["psnr"]["val"].append(float(row["val_psnr"]))
-                    history["ssim"]["train"].append(float(row["train_ssim"]))
-                    history["ssim"]["val"].append(float(row["val_ssim"]))
-                    if "train_lpips" in row and "val_lpips" in row:
-                        history["lpips"]["train"].append(float(row["train_lpips"]))
-                        history["lpips"]["val"].append(float(row["val_lpips"]))
-                    else:
-                        history["lpips"]["train"].append(0.0)
-                        history["lpips"]["val"].append(0.0)
+                    history["d_fake_prob"]["val"].append(
+                        _row_float(row, "val_d_fake_prob", 0.0)
+                    )
+                    history["psnr"]["train"].append(_row_float(row, "train_psnr", 0.0))
+                    history["psnr"]["val"].append(_row_float(row, "val_psnr", 0.0))
+                    history["ssim"]["train"].append(_row_float(row, "train_ssim", 0.0))
+                    history["ssim"]["val"].append(_row_float(row, "val_ssim", 0.0))
+                    history["lpips"]["train"].append(_row_float(row, "train_lpips", 0.0))
+                    history["lpips"]["val"].append(_row_float(row, "val_lpips", 0.0))
+                    history["loss_adv"]["train"].append(
+                        _row_float(row, "train_loss_adv", 0.0)
+                    )
+                    history["loss_adv"]["val"].append(
+                        _row_float(row, "val_loss_adv", 0.0)
+                    )
+                    history["loss_lpips_core"]["train"].append(
+                        _row_float(row, "train_loss_lpips_core", 0.0)
+                    )
+                    history["loss_lpips_core"]["val"].append(
+                        _row_float(row, "val_loss_lpips_core", 0.0)
+                    )
+                    history["noise_std"].append(_row_float(row, "noise_std", 0.0))
         print(
             f"[Log] Loaded {len(history['loss_g']['train'])} previous epochs from {log_path}"
         )
@@ -168,49 +240,36 @@ def rewrite_log_up_to_epoch(log_path, history, start_epoch):
     Rewrite CSV log file with only epochs before start_epoch.
     This ensures clean resume without duplicate entries.
     """
-    expected_header = [
-        "epoch",
-        "train_loss_g",
-        "val_loss_g",
-        "train_loss_d",
-        "val_loss_d",
-        "train_d_real_prob",
-        "val_d_real_prob",
-        "train_d_fake_prob",
-        "val_d_fake_prob",
-        "train_psnr",
-        "val_psnr",
-        "train_ssim",
-        "val_ssim",
-        "train_lpips",
-        "val_lpips",
-    ]
-
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
     with open(log_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(expected_header)
+        writer.writerow(GAN_LOG_FIELDS)
 
         num_entries = len(history["loss_g"]["train"])
         for i in range(num_entries):
             writer.writerow(
                 [
                     i + 1,  # epoch (1-indexed)
-                    history["loss_g"]["train"][i],
-                    history["loss_g"]["val"][i],
-                    history["loss_d"]["train"][i],
-                    history["loss_d"]["val"][i],
-                    history["d_real_prob"]["train"][i],
-                    history["d_real_prob"]["val"][i],
-                    history["d_fake_prob"]["train"][i],
-                    history["d_fake_prob"]["val"][i],
-                    history["psnr"]["train"][i],
-                    history["psnr"]["val"][i],
-                    history["ssim"]["train"][i],
-                    history["ssim"]["val"][i],
-                    history["lpips"]["train"][i],
-                    history["lpips"]["val"][i],
+                    _history_value(history, "loss_g", "train", i),
+                    _history_value(history, "loss_g", "val", i),
+                    _history_value(history, "loss_d", "train", i),
+                    _history_value(history, "loss_d", "val", i),
+                    _history_value(history, "d_real_prob", "train", i),
+                    _history_value(history, "d_real_prob", "val", i),
+                    _history_value(history, "d_fake_prob", "train", i),
+                    _history_value(history, "d_fake_prob", "val", i),
+                    _history_value(history, "psnr", "train", i),
+                    _history_value(history, "psnr", "val", i),
+                    _history_value(history, "ssim", "train", i),
+                    _history_value(history, "ssim", "val", i),
+                    _history_value(history, "lpips", "train", i),
+                    _history_value(history, "lpips", "val", i),
+                    _history_value(history, "loss_adv", "train", i),
+                    _history_value(history, "loss_adv", "val", i),
+                    _history_value(history, "loss_lpips_core", "train", i),
+                    _history_value(history, "loss_lpips_core", "val", i),
+                    _history_scalar_value(history, "noise_std", i),
                 ]
             )
 
@@ -233,6 +292,29 @@ def _ddp_reduce_totals(totals, device):
         dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
         return tensor.tolist()
     return totals
+
+
+def _compute_discriminator_loss(
+    d_real_logits,
+    d_fake_logits,
+    adversarial_criterion,
+    real_label=1.0,
+    fake_label=0.0,
+):
+    loss_d_real = adversarial_criterion(d_real_logits, True, real_label)
+    loss_d_fake = adversarial_criterion(d_fake_logits, False, fake_label)
+    loss_d = 0.5 * (loss_d_real + loss_d_fake)
+    return loss_d, loss_d_real, loss_d_fake
+
+
+def _scheduled_noise_std(epoch_idx, start_std, end_std, decay_epochs):
+    decay_epochs = int(max(decay_epochs, 1))
+    if epoch_idx >= decay_epochs:
+        return float(end_std)
+    if decay_epochs == 1:
+        return float(end_std)
+    t = float(max(epoch_idx - 1, 0)) / float(decay_epochs - 1)
+    return float(start_std) + t * (float(end_std) - float(start_std))
 
 
 def train_srresnet_epoch(
@@ -371,9 +453,14 @@ def train_gan_epoch(
     g_loss_mode="srgan",
     lpips_criterion=None,
     lpips_metric=None,
-    g_steps=2,
+    epoch_idx=1,
+    g_steps=1,
     d_steps=1,
     r1_weight=0.0,
+    r1_interval=1,
+    d_noise_std_start=0.0,
+    d_noise_std_end=0.0,
+    d_noise_decay_epochs=1,
     real_label=0.9,
     fake_label=0.0,
     use_amp=False,
@@ -397,11 +484,24 @@ def train_gan_epoch(
     total_psnr = 0.0
     total_ssim = 0.0
     total_lpips = 0.0
+    total_adv = 0.0
+    total_lpips_core = 0.0
+    total_noise_std = 0.0
     count = 0
 
     device_type = device.type if hasattr(device, "type") else ("cuda" if torch.cuda.is_available() else "cpu")
     if scaler is None:
         scaler = torch.amp.GradScaler(device_type, enabled=use_amp)
+    if g_steps < 1 or d_steps < 1:
+        raise ValueError(f"g_steps and d_steps must be >= 1, got g_steps={g_steps}, d_steps={d_steps}")
+    noise_std = _scheduled_noise_std(
+        epoch_idx=epoch_idx,
+        start_std=d_noise_std_start,
+        end_std=d_noise_std_end,
+        decay_epochs=d_noise_decay_epochs,
+    )
+    r1_interval = max(int(r1_interval), 1)
+    d_update_idx = 0
 
     for lr, hr in loader:
         lr = lr.to(device, non_blocking=True)
@@ -415,36 +515,41 @@ def train_gan_epoch(
             with torch.no_grad():
                 with torch.amp.autocast(device_type=device_type, enabled=use_amp):
                     sr = generator(lr)
-            # Add Gaussian Noise to prevent D from overfitting
-            noise_std = 0.05
-            if r1_weight > 0.0:
-                hr.requires_grad_(True)
-                # R1 with BN can cause in-place version issues; use eval temporarily
-                discriminator.train()
-                discriminator.eval()
 
-            # Apply noise to inputs for D
-            d_real_input = hr + torch.randn_like(hr) * noise_std
-            d_fake_input = sr.detach() + torch.randn_like(sr) * noise_std
+            d_update_idx += 1
+            apply_r1 = r1_weight > 0.0 and (d_update_idx % r1_interval == 0)
+            hr_for_d = hr.requires_grad_(True) if apply_r1 else hr
 
-            if r1_weight > 0.0:
-                # Full precision forward to avoid BN state mutation across multiple forwards
+            d_real_input = hr_for_d
+            d_fake_input = sr.detach()
+            if noise_std > 0.0:
+                d_real_input = d_real_input + torch.randn_like(d_real_input) * noise_std
+                d_fake_input = d_fake_input + torch.randn_like(d_fake_input) * noise_std
+
+            if apply_r1:
                 with torch.amp.autocast(device_type=device_type, enabled=False):
                     d_real = discriminator(d_real_input.float())
                     d_fake = discriminator(d_fake_input.float())
-                    loss_d_real = adversarial_criterion(d_real, True, real_label)
-                    loss_d_fake = adversarial_criterion(d_fake, False, fake_label)
-                    loss_d_step = 0.5 * (loss_d_real + loss_d_fake)
-                    r1_penalty = _r1_penalty(d_real, hr)
-                    loss_d_step = loss_d_step + 0.5 * r1_weight * r1_penalty
-                discriminator.train()
+                    loss_d_step, _, _ = _compute_discriminator_loss(
+                        d_real,
+                        d_fake,
+                        adversarial_criterion,
+                        real_label=real_label,
+                        fake_label=fake_label,
+                    )
+                    r1_penalty = _r1_penalty(d_real, hr_for_d)
+                    loss_d_step = loss_d_step + 0.5 * float(r1_weight) * r1_penalty
             else:
                 with torch.amp.autocast(device_type=device_type, enabled=use_amp):
                     d_real = discriminator(d_real_input)
                     d_fake = discriminator(d_fake_input)
-                    loss_d_real = adversarial_criterion(d_real, True, real_label)
-                    loss_d_fake = adversarial_criterion(d_fake, False, fake_label)
-                    loss_d_step = 0.5 * (loss_d_real + loss_d_fake)
+                    loss_d_step, _, _ = _compute_discriminator_loss(
+                        d_real,
+                        d_fake,
+                        adversarial_criterion,
+                        real_label=real_label,
+                        fake_label=fake_label,
+                    )
 
             with torch.no_grad():
                 d_real_prob = torch.sigmoid(d_real).mean()
@@ -455,11 +560,13 @@ def train_gan_epoch(
             scaler.step(optimizer_d)
             scaler.update()
             loss_d = loss_d_step
-            if r1_weight > 0.0:
+            if apply_r1:
                 hr = hr.detach()
 
         # Train G
         loss_g = 0.0
+        loss_adv_for_log = None
+        loss_lpips_core_for_log = None
         for _ in range(g_steps):
             with torch.amp.autocast(device_type=device_type, enabled=use_amp):
                 sr = generator(lr)
@@ -471,6 +578,7 @@ def train_gan_epoch(
                         weights["perceptual"] * loss_perc
                         + weights["adversarial"] * loss_adv
                     )
+                    loss_lpips_core = torch.zeros((), device=sr.device, dtype=sr.dtype)
                 elif g_loss_mode == "lpips_adv":
                     if lpips_criterion is None:
                         raise RuntimeError(
@@ -482,6 +590,7 @@ def train_gan_epoch(
                         weights["lpips"] * loss_lpips
                         + weights["adversarial"] * loss_adv
                     )
+                    loss_lpips_core = loss_lpips
                 else:
                     raise ValueError(f"Unsupported g_loss_mode: {g_loss_mode}")
 
@@ -490,6 +599,8 @@ def train_gan_epoch(
             scaler.step(optimizer_g)
             scaler.update()
             loss_g = loss_g_step
+            loss_adv_for_log = loss_adv
+            loss_lpips_core_for_log = loss_lpips_core
 
         with torch.no_grad():
             sr_clip = sr.clamp(0.0, 1.0)
@@ -514,6 +625,9 @@ def train_gan_epoch(
         total_psnr += batch_psnr * batch_size
         total_ssim += batch_ssim * batch_size
         total_lpips += batch_lpips * batch_size
+        total_adv += loss_adv_for_log.item() * batch_size
+        total_lpips_core += loss_lpips_core_for_log.item() * batch_size
+        total_noise_std += noise_std * batch_size
         count += batch_size
 
         if hasattr(loader, "set_postfix"):
@@ -523,6 +637,7 @@ def train_gan_epoch(
                     "loss_D": f"{loss_d.item():.4f}",
                     "psnr": f"{total_psnr / max(count, 1):.2f}",
                     "lpips": f"{total_lpips / max(count, 1):.4f}",
+                    "adv": f"{total_adv / max(count, 1):.4f}",
                 }
             )
 
@@ -534,6 +649,9 @@ def train_gan_epoch(
         total_psnr,
         total_ssim,
         total_lpips,
+        total_adv,
+        total_lpips_core,
+        total_noise_std,
         count,
     ) = _ddp_reduce_totals(
         [
@@ -544,6 +662,9 @@ def train_gan_epoch(
             total_psnr,
             total_ssim,
             total_lpips,
+            total_adv,
+            total_lpips_core,
+            total_noise_std,
             float(count),
         ],
         device,
@@ -557,6 +678,9 @@ def train_gan_epoch(
         "psnr": total_psnr / max(count, 1),
         "ssim": total_ssim / max(count, 1),
         "lpips": total_lpips / max(count, 1),
+        "loss_adv": total_adv / max(count, 1),
+        "loss_lpips_core": total_lpips_core / max(count, 1),
+        "noise_std": total_noise_std / max(count, 1),
     }
 
 
@@ -572,6 +696,9 @@ def val_gan_epoch(
     g_loss_mode="srgan",
     lpips_criterion=None,
     lpips_metric=None,
+    real_label=0.9,
+    fake_label=0.0,
+    val_use_train_labels=True,
     use_amp=False,
 ):
     generator.eval()
@@ -584,6 +711,8 @@ def val_gan_epoch(
     total_psnr = 0.0
     total_ssim = 0.0
     total_lpips = 0.0
+    total_adv = 0.0
+    total_lpips_core = 0.0
     count = 0
 
     device_type = device.type if hasattr(device, "type") else ("cuda" if torch.cuda.is_available() else "cpu")
@@ -598,9 +727,15 @@ def val_gan_epoch(
                 d_real = discriminator(hr)
                 d_fake = discriminator(sr)
 
-                loss_d_real = adversarial_criterion(d_real, True)
-                loss_d_fake = adversarial_criterion(d_fake, False)
-                loss_d = 0.5 * (loss_d_real + loss_d_fake)
+                d_real_label = real_label if val_use_train_labels else 1.0
+                d_fake_label = fake_label if val_use_train_labels else 0.0
+                loss_d, _, _ = _compute_discriminator_loss(
+                    d_real,
+                    d_fake,
+                    adversarial_criterion,
+                    real_label=d_real_label,
+                    fake_label=d_fake_label,
+                )
 
                 d_real_prob = torch.sigmoid(d_real).mean()
                 d_fake_prob = torch.sigmoid(d_fake).mean()
@@ -612,6 +747,7 @@ def val_gan_epoch(
                         weights["perceptual"] * loss_perc
                         + weights["adversarial"] * loss_adv
                     )
+                    loss_lpips_core = torch.zeros((), device=sr.device, dtype=sr.dtype)
                 elif g_loss_mode == "lpips_adv":
                     if lpips_criterion is None:
                         raise RuntimeError(
@@ -623,6 +759,7 @@ def val_gan_epoch(
                         weights["lpips"] * loss_lpips
                         + weights["adversarial"] * loss_adv
                     )
+                    loss_lpips_core = loss_lpips
                 else:
                     raise ValueError(f"Unsupported g_loss_mode: {g_loss_mode}")
 
@@ -647,6 +784,8 @@ def val_gan_epoch(
             total_psnr += batch_psnr * batch_size
             total_ssim += batch_ssim * batch_size
             total_lpips += batch_lpips * batch_size
+            total_adv += loss_adv.item() * batch_size
+            total_lpips_core += loss_lpips_core.item() * batch_size
             count += batch_size
 
             if hasattr(loader, "set_postfix"):
@@ -656,6 +795,7 @@ def val_gan_epoch(
                         "loss_D": f"{loss_d.item():.4f}",
                         "psnr": f"{total_psnr / max(count, 1):.2f}",
                         "lpips": f"{total_lpips / max(count, 1):.4f}",
+                        "adv": f"{total_adv / max(count, 1):.4f}",
                     }
                 )
 
@@ -667,6 +807,8 @@ def val_gan_epoch(
         total_psnr,
         total_ssim,
         total_lpips,
+        total_adv,
+        total_lpips_core,
         count,
     ) = _ddp_reduce_totals(
         [
@@ -677,6 +819,8 @@ def val_gan_epoch(
             total_psnr,
             total_ssim,
             total_lpips,
+            total_adv,
+            total_lpips_core,
             float(count),
         ],
         device,
@@ -690,4 +834,7 @@ def val_gan_epoch(
         "psnr": total_psnr / max(count, 1),
         "ssim": total_ssim / max(count, 1),
         "lpips": total_lpips / max(count, 1),
+        "loss_adv": total_adv / max(count, 1),
+        "loss_lpips_core": total_lpips_core / max(count, 1),
+        "noise_std": 0.0,
     }
